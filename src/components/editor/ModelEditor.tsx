@@ -44,6 +44,10 @@ import {
   Redo2,
   Scissors,
   Ruler,
+  Eraser,
+  Combine,
+  CheckSquare,
+  SquareDashed,
 } from "lucide-react";
 import {
   GEOMETRY_SPECS,
@@ -58,7 +62,7 @@ import { BoxHandles, type HandleMode, type HandlePlane } from "./handles";
 import ColorPicker from "./ColorPicker";
 import { SnapGuides, hitsSolid } from "./snapping";
 import { VertexEditor } from "./vertexEdit";
-import { CutTool, sliceGeometry, type CutStatus } from "./cutTool";
+import { CutTool, sliceGeometry, carveGeometry, type CutStatus } from "./cutTool";
 import { HistoryStack, captureSnapshot, restoreSnapshot, type Snapshot } from "./history";
 
 type Item = { id: string; name: string; kind: Kind };
@@ -163,6 +167,8 @@ export default function ModelEditor() {
   const [cutMode, setCutMode] = useState(false);
   const [cutStatus, setCutStatus] = useState<CutStatus>({ count: 0, aligned: [], planar: false });
   const [cutError, setCutError] = useState<string | null>(null);
+  const [joinIds, setJoinIds] = useState<string[]>([]);
+  const [joinError, setJoinError] = useState<string | null>(null);
   const [histVersion, setHistVersion] = useState(0);
   const [menu, setMenu] = useState<{ x: number; y: number; id: string | null } | null>(null);
 
@@ -1110,6 +1116,166 @@ export default function ModelEditor() {
     tick();
   }, [tick]);
 
+  /* remove everything inside the point cage (punch the area out) */
+  const removeInside = useCallback(() => {
+    const tool = cutRef.current;
+    if (!tool) return;
+    const plane = tool.getPlane();
+    const pts = tool.getPoints();
+    const id = selectedRef.current;
+    const obj = id ? objectsRef.current.get(id) : null;
+    const mesh = obj as THREE.Mesh | null;
+    if (!plane || pts.length < 3) {
+      setCutError("Place at least 3 points around the area you want to remove.");
+      return;
+    }
+    if (!mesh || !mesh.isMesh || !mesh.geometry) {
+      setCutError("Select the object you want to cut first.");
+      return;
+    }
+
+    mesh.updateMatrixWorld(true);
+    const inv = new THREE.Matrix4().copy(mesh.matrixWorld).invert();
+    const normalLocal = plane.normal
+      .clone()
+      .applyMatrix3(new THREE.Matrix3().getNormalMatrix(inv))
+      .normalize();
+    const polyLocal = pts.map((p) => p.clone().applyMatrix4(inv));
+
+    const arr = carveGeometry(mesh.geometry, polyLocal, normalLocal);
+    if (!arr) {
+      setCutError("That area does not cover any part of the object.");
+      return;
+    }
+
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(arr, 3));
+    g.computeVertexNormals();
+    g.computeBoundingBox();
+    g.computeBoundingSphere();
+    g.userData["custom"] = true;
+    g.userData["vertexEditOwned"] = true;
+
+    vertexRef.current?.attach(null);
+    const old = mesh.geometry;
+    mesh.geometry = g;
+    old.dispose();
+    mesh.userData["deformed"] = true;
+
+    tool.clear();
+    setCutMode(false);
+    setCutError(null);
+    setItems((prev) => [...prev]);
+    tick();
+  }, [tick]);
+
+  /* ---------------- join objects into one ---------------- */
+  const toggleJoinId = useCallback((id: string) => {
+    setJoinError(null);
+    setJoinIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }, []);
+
+  const joinObjects = useCallback(() => {
+    const scene = sceneRef.current;
+    if (!scene) return;
+    const ids = Array.from(new Set(joinIds));
+    const meshes = ids
+      .map((id) => ({ id, obj: objectsRef.current.get(id) }))
+      .filter((e): e is { id: string; obj: THREE.Mesh } => {
+        const m = e.obj as THREE.Mesh | undefined;
+        return !!m && (m as THREE.Mesh).isMesh === true && !!m.geometry;
+      });
+    if (meshes.length < 2) {
+      setJoinError("Pick at least 2 meshes in the outliner to join.");
+      return;
+    }
+
+    const center = new THREE.Vector3();
+    for (const { obj } of meshes) {
+      obj.updateMatrixWorld(true);
+      center.add(obj.getWorldPosition(new THREE.Vector3()));
+    }
+    center.multiplyScalar(1 / meshes.length);
+
+    const positions: number[] = [];
+    const toLocal = new THREE.Matrix4().makeTranslation(-center.x, -center.y, -center.z);
+    for (const { obj } of meshes) {
+      const src = obj.geometry.index ? obj.geometry.toNonIndexed() : obj.geometry;
+      const pos = src.getAttribute("position") as THREE.BufferAttribute | undefined;
+      if (pos) {
+        const m = new THREE.Matrix4().multiplyMatrices(toLocal, obj.matrixWorld);
+        const p = new THREE.Vector3();
+        for (let i = 0; i < pos.count; i++) {
+          p.set(pos.getX(i), pos.getY(i), pos.getZ(i)).applyMatrix4(m);
+          positions.push(p.x, p.y, p.z);
+        }
+      }
+      if (src !== obj.geometry) src.dispose();
+    }
+    if (!positions.length) {
+      setJoinError("These objects have no geometry to join.");
+      return;
+    }
+
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(positions), 3));
+    g.computeVertexNormals();
+    g.computeBoundingBox();
+    g.computeBoundingSphere();
+    g.userData["custom"] = true;
+    g.userData["vertexEditOwned"] = true;
+
+    const first = meshes[0]!.obj;
+    const baseMat = first.material as THREE.Material;
+    const merged = new THREE.Mesh(g, baseMat.clone());
+    merged.position.copy(center);
+    merged.castShadow = true;
+    merged.receiveShadow = true;
+    merged.userData["kind"] = first.userData["kind"] ?? "plane";
+    merged.userData["deformed"] = true;
+
+    transformRef.current?.detach();
+    handlesRef.current?.attach(null);
+    vertexRef.current?.attach(null);
+
+    const idSet = new Set(meshes.map((m) => m.id));
+    for (const { id, obj } of meshes) {
+      scene.remove(obj);
+      obj.geometry.dispose();
+      objectsRef.current.delete(id);
+    }
+
+    const newId = nextId();
+    objectsRef.current.set(newId, merged);
+    scene.add(merged);
+
+    const firstItem = itemsRef.current.find((i) => idSet.has(i.id));
+    setItems((prev) => {
+      const out: Item[] = [];
+      let placed = false;
+      for (const p of prev) {
+        if (idSet.has(p.id)) {
+          if (!placed) {
+            out.push({
+              id: newId,
+              name: `${firstItem?.name ?? "Mesh"} (joined)`,
+              kind: (firstItem?.kind ?? "plane") as Kind,
+            });
+            placed = true;
+          }
+          continue;
+        }
+        out.push(p);
+      }
+      return out;
+    });
+    setSelected(newId);
+    setJoinIds([]);
+    setJoinError(null);
+    tick();
+  }, [joinIds, tick]);
+
+
   useEffect(() => {
     const c = cutRef.current;
     if (!c) return;
@@ -1119,6 +1285,13 @@ export default function ModelEditor() {
       setCutError(null);
     }
   }, [cutMode]);
+
+  useEffect(() => {
+    setJoinIds((prev) => {
+      const next = prev.filter((id) => items.some((i) => i.id === id));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [items]);
 
   /* ---------------- right click menu actions ---------------- */
   const menuActions = useMemo(() => {
@@ -1245,6 +1418,9 @@ export default function ModelEditor() {
         } else if (k === "y") {
           e.preventDefault();
           redo();
+        } else if (k === "j") {
+          e.preventDefault();
+          joinObjects();
         }
         return;
       }
@@ -1268,7 +1444,7 @@ export default function ModelEditor() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [removeSelected, duplicateSelected, undo, redo]);
+  }, [removeSelected, duplicateSelected, undo, redo, joinObjects]);
 
   const setCameraPreset = (preset: "iso" | "top" | "front" | "side") => {
     const cam = cameraRef.current;
@@ -1320,7 +1496,8 @@ export default function ModelEditor() {
           <span className="text-sm font-semibold tracking-tight">RenderCraft Modeler</span>
         </div>
         <span className="hidden text-xs text-muted-foreground sm:inline">
-          G move · R rotate · S scale · C cut · Ctrl+Z undo · Ctrl+Shift+Z redo · X delete
+          G move · R rotate · S scale · C cut · Ctrl+J join · Ctrl+Z undo · Ctrl+Shift+Z redo · X
+          delete
         </span>
         <div className="ml-auto flex items-center gap-2">
           <div className="flex items-center gap-1">
@@ -1707,10 +1884,47 @@ export default function ModelEditor() {
                 >
                   <Scissors className="size-3.5" /> Apply cut
                 </button>
+                <button
+                  onClick={removeInside}
+                  disabled={cutStatus.count < 3}
+                  className="flex w-full items-center gap-2 rounded-md bg-destructive px-2 py-1.5 text-[11px] font-semibold text-destructive-foreground cursor-pointer transition-colors hover:bg-destructive/90 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <Eraser className="size-3.5" /> Remove inside area
+                </button>
                 {cutError && <p className="text-[10px] text-destructive">{cutError}</p>}
               </div>
             )}
+
+            <div className="mt-2 space-y-1 rounded-md border border-border bg-secondary/40 p-2">
+              <p className="text-[10px] font-semibold text-foreground flex items-center gap-1.5">
+                <Combine className="size-3.5" /> Join meshes
+              </p>
+              <p className="text-[10px] text-muted-foreground">
+                Ctrl+click objects in the outliner to tick them, then join them into one mesh.
+              </p>
+              <p className="text-[10px] text-primary">{joinIds.length} object(s) picked</p>
+              <button
+                onClick={joinObjects}
+                disabled={joinIds.length < 2}
+                className="flex w-full items-center gap-2 rounded-md bg-primary px-2 py-1.5 text-[11px] font-semibold text-primary-foreground cursor-pointer transition-colors hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <Combine className="size-3.5" /> Join into one (Ctrl+J)
+              </button>
+              {joinIds.length > 0 && (
+                <button
+                  onClick={() => {
+                    setJoinIds([]);
+                    setJoinError(null);
+                  }}
+                  className="flex w-full items-center gap-2 rounded-md border border-border bg-secondary px-2 py-1.5 text-[11px] text-muted-foreground cursor-pointer transition-colors hover:bg-accent hover:text-foreground"
+                >
+                  <SquareDashed className="size-3.5" /> Clear picks
+                </button>
+              )}
+              {joinError && <p className="text-[10px] text-destructive">{joinError}</p>}
+            </div>
           </div>
+
 
           <div className="mt-4 space-y-1">
             <button
@@ -2020,24 +2234,35 @@ export default function ModelEditor() {
                           setOutlinerDragOverIdx(null);
                         }
                       }}
-                      onClick={() => {
+                      onClick={(e) => {
+                        if (e.ctrlKey || e.metaKey || e.shiftKey) {
+                          e.preventDefault();
+                          toggleJoinId(i.id);
+                          return;
+                        }
                         setSelected(i.id);
                         setPanelTab("properties");
                       }}
                       className={`group flex items-center justify-between rounded px-2.5 py-1.5 text-xs transition-all cursor-grab active:cursor-grabbing border ${
                         isOver
                           ? "border-primary bg-primary/20 scale-[1.01]"
+                          : joinIds.includes(i.id)
+                          ? "border-amber-400/70 bg-amber-400/15 text-amber-300"
                           : isSel
                           ? "border-primary/50 bg-primary/15 text-primary font-semibold shadow-xs"
                           : "border-transparent text-muted-foreground hover:bg-accent hover:text-foreground"
                       }`}
                     >
                       <div className="flex items-center gap-2 min-w-0">
-                        <GripVertical
-                          className={`size-3.5 shrink-0 opacity-40 group-hover:opacity-100 transition-opacity ${
-                            isSel ? "text-primary" : "text-muted-foreground"
-                          }`}
-                        />
+                        {joinIds.includes(i.id) ? (
+                          <CheckSquare className="size-3.5 shrink-0 text-amber-300" />
+                        ) : (
+                          <GripVertical
+                            className={`size-3.5 shrink-0 opacity-40 group-hover:opacity-100 transition-opacity ${
+                              isSel ? "text-primary" : "text-muted-foreground"
+                            }`}
+                          />
+                        )}
                         <span className="truncate">{i.name}</span>
                       </div>
 
