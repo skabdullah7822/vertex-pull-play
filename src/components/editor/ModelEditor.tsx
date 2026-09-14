@@ -756,7 +756,7 @@ export default function ModelEditor() {
   useEffect(() => {
     const t = transformRef.current;
     if (!t) return;
-    if (mode === "place" || vertexMode) {
+    if (mode === "place" || vertexMode || cutMode) {
       t.detach();
       return;
     }
@@ -764,7 +764,7 @@ export default function ModelEditor() {
     if (obj) t.attach(obj);
     else t.detach();
     t.setMode(mode);
-  }, [selected, items, mode, vertexMode]);
+  }, [selected, items, mode, vertexMode, cutMode]);
 
   useEffect(() => {
     if (mode !== "place" && dropIndicatorRef.current) {
