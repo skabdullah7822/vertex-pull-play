@@ -330,6 +330,7 @@ export default function ModelEditor() {
         isScaling = false;
         snap.clear();
         tick();
+        commitRef.current?.();
       }
     });
     transform.addEventListener("objectChange", () => {
@@ -373,11 +374,25 @@ export default function ModelEditor() {
       (d) => {
         orbit.enabled = !d;
         transform.enabled = !d;
+        if (!d) commitRef.current?.();
       },
       setVertexCount,
     );
     scene.add(vertexEditor.group);
     vertexRef.current = vertexEditor;
+
+    const cutTool = new CutTool(
+      camera,
+      renderer.domElement,
+      tick,
+      (d) => {
+        orbit.enabled = !d;
+        transform.enabled = !d;
+      },
+      setCutStatus,
+    );
+    scene.add(cutTool.group);
+    cutRef.current = cutTool;
 
     // viewport helper lights so the scene is never pitch black
     const hemi = new THREE.HemisphereLight(0xbfd4ff, 0x20242b, 0.55);
@@ -549,6 +564,20 @@ export default function ModelEditor() {
         return;
       }
 
+      if (cutModeRef.current) {
+        let point: THREE.Vector3 | null = hits.length ? hits[0]!.point.clone() : null;
+        if (!point) {
+          const p = new THREE.Vector3();
+          point = raycaster.ray.intersectPlane(groundPlane, p) ? p.clone() : null;
+        }
+        if (!point) return;
+        if (!selectedRef.current && id) setSelected(id);
+        cutTool.addPoint(point);
+        setCutError(null);
+        return;
+      }
+
+
       if (modeRef.current === "place" && selectedRef.current) {
         const target = computeDropPosition(e.clientX, e.clientY, selectedRef.current);
         const obj = objectsRef.current.get(selectedRef.current);
@@ -680,6 +709,7 @@ export default function ModelEditor() {
       orbit.update();
       handles.update();
       vertexEditor.update();
+      cutTool.update();
       renderer.render(scene, camera);
     });
 
@@ -708,6 +738,8 @@ export default function ModelEditor() {
       snap.dispose();
       handles.dispose();
       vertexEditor.dispose();
+      cutTool.dispose();
+      cutRef.current = null;
       vertexRef.current = null;
       transform.detach();
       transform.dispose();
