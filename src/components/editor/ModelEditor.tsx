@@ -1320,9 +1320,27 @@ export default function ModelEditor() {
           <span className="text-sm font-semibold tracking-tight">RenderCraft Modeler</span>
         </div>
         <span className="hidden text-xs text-muted-foreground sm:inline">
-          G move · R rotate · S scale (Ctrl: 2 sides) · Shift+D duplicate · X delete · Right-click for tools
+          G move · R rotate · S scale · C cut · Ctrl+Z undo · Ctrl+Shift+Z redo · X delete
         </span>
         <div className="ml-auto flex items-center gap-2">
+          <div className="flex items-center gap-1">
+            <button
+              onClick={undo}
+              disabled={!canUndo}
+              title="Undo (Ctrl+Z)"
+              className="inline-flex items-center gap-1.5 rounded-md border border-border bg-secondary px-2.5 py-1.5 text-xs font-medium cursor-pointer transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Undo2 className="size-3.5" /> Undo
+            </button>
+            <button
+              onClick={redo}
+              disabled={!canRedo}
+              title="Redo (Ctrl+Shift+Z)"
+              className="inline-flex items-center gap-1.5 rounded-md border border-border bg-secondary px-2.5 py-1.5 text-xs font-medium cursor-pointer transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Redo2 className="size-3.5" /> Redo
+            </button>
+          </div>
           <button
             onClick={() => setSidebarOpen((v) => !v)}
             title="Toggle Inspector & Properties Panel"
