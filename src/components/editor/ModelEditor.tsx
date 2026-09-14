@@ -1437,7 +1437,7 @@ export default function ModelEditor() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [removeSelected, duplicateSelected, undo, redo]);
+  }, [removeSelected, duplicateSelected, undo, redo, joinObjects]);
 
   const setCameraPreset = (preset: "iso" | "top" | "front" | "side") => {
     const cam = cameraRef.current;
