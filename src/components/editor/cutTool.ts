@@ -487,3 +487,89 @@ export function sliceGeometry(
   if (!sideA.length || !sideB.length) return null;
   return { a: new Float32Array(sideA), b: new Float32Array(sideB) };
 }
+
+/**
+ * Removes the region of a mesh that falls inside a polygon prism.
+ * `polyLocal` is the point cage in the mesh's local space, `normalLocal` the
+ * cage's plane normal; the polygon is extruded infinitely along that normal so
+ * the inner area is carved right through the object.
+ */
+export function carveGeometry(
+  geo: THREE.BufferGeometry,
+  polyLocal: THREE.Vector3[],
+  normalLocal: THREE.Vector3,
+): Float32Array | null {
+  if (polyLocal.length < 3) return null;
+  const src = geo.index ? geo.toNonIndexed() : geo;
+  const pos = src.getAttribute("position") as THREE.BufferAttribute | undefined;
+  if (!pos) return null;
+
+  const n = normalLocal.clone().normalize();
+  const u = new THREE.Vector3(1, 0, 0);
+  if (Math.abs(n.dot(u)) > 0.9) u.set(0, 1, 0);
+  u.crossVectors(n, u).normalize();
+  const v = new THREE.Vector3().crossVectors(n, u).normalize();
+  const origin = polyLocal[0]!.clone();
+
+  const to2 = (p: THREE.Vector3) => {
+    const d = p.clone().sub(origin);
+    return { x: d.dot(u), y: d.dot(v) };
+  };
+  const poly2 = polyLocal.map(to2);
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const p of poly2) {
+    minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+    minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+  }
+
+  const inside = (p: { x: number; y: number }) => {
+    let hit = false;
+    for (let i = 0, j = poly2.length - 1; i < poly2.length; j = i++) {
+      const a = poly2[i]!;
+      const b = poly2[j]!;
+      if ((a.y > p.y) !== (b.y > p.y) && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) {
+        hit = !hit;
+      }
+    }
+    return hit;
+  };
+
+  const out: number[] = [];
+  const MAX_DEPTH = 5;
+  const push = (a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3) => {
+    out.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
+  };
+
+  const rec = (a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3, depth: number) => {
+    const pa = to2(a), pb = to2(b), pc = to2(c);
+    const ia = inside(pa), ib = inside(pb), ic = inside(pc);
+    const count = (ia ? 1 : 0) + (ib ? 1 : 0) + (ic ? 1 : 0);
+    const triMinX = Math.min(pa.x, pb.x, pc.x), triMaxX = Math.max(pa.x, pb.x, pc.x);
+    const triMinY = Math.min(pa.y, pb.y, pc.y), triMaxY = Math.max(pa.y, pb.y, pc.y);
+    const overlaps = triMaxX >= minX && triMinX <= maxX && triMaxY >= minY && triMinY <= maxY;
+    if (count === 3) return; // fully inside -> removed
+    if (!overlaps) {
+      push(a, b, c);
+      return;
+    }
+    if (depth >= MAX_DEPTH) {
+      if (count === 0) push(a, b, c);
+      return;
+    }
+    const ab = a.clone().lerp(b, 0.5);
+    const bc = b.clone().lerp(c, 0.5);
+    const ca = c.clone().lerp(a, 0.5);
+    rec(a, ab, ca, depth + 1);
+    rec(ab, b, bc, depth + 1);
+    rec(ca, bc, c, depth + 1);
+    rec(ab, bc, ca, depth + 1);
+  };
+
+  const vv = (i: number) => new THREE.Vector3(pos.getX(i), pos.getY(i), pos.getZ(i));
+  for (let i = 0; i < pos.count; i += 3) rec(vv(i), vv(i + 1), vv(i + 2), 0);
+
+  if (src !== geo) src.dispose();
+  if (!out.length) return null;
+  if (out.length === pos.count * 3) return null; // nothing was removed
+  return new Float32Array(out);
+}
