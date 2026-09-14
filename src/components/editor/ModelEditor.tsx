@@ -1873,10 +1873,47 @@ export default function ModelEditor() {
                 >
                   <Scissors className="size-3.5" /> Apply cut
                 </button>
+                <button
+                  onClick={removeInside}
+                  disabled={cutStatus.count < 3}
+                  className="flex w-full items-center gap-2 rounded-md bg-destructive px-2 py-1.5 text-[11px] font-semibold text-destructive-foreground cursor-pointer transition-colors hover:bg-destructive/90 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <Eraser className="size-3.5" /> Remove inside area
+                </button>
                 {cutError && <p className="text-[10px] text-destructive">{cutError}</p>}
               </div>
             )}
+
+            <div className="mt-2 space-y-1 rounded-md border border-border bg-secondary/40 p-2">
+              <p className="text-[10px] font-semibold text-foreground flex items-center gap-1.5">
+                <Combine className="size-3.5" /> Join meshes
+              </p>
+              <p className="text-[10px] text-muted-foreground">
+                Ctrl+click objects in the outliner to tick them, then join them into one mesh.
+              </p>
+              <p className="text-[10px] text-primary">{joinIds.length} object(s) picked</p>
+              <button
+                onClick={joinObjects}
+                disabled={joinIds.length < 2}
+                className="flex w-full items-center gap-2 rounded-md bg-primary px-2 py-1.5 text-[11px] font-semibold text-primary-foreground cursor-pointer transition-colors hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <Combine className="size-3.5" /> Join into one (Ctrl+J)
+              </button>
+              {joinIds.length > 0 && (
+                <button
+                  onClick={() => {
+                    setJoinIds([]);
+                    setJoinError(null);
+                  }}
+                  className="flex w-full items-center gap-2 rounded-md border border-border bg-secondary px-2 py-1.5 text-[11px] text-muted-foreground cursor-pointer transition-colors hover:bg-accent hover:text-foreground"
+                >
+                  <SquareDashed className="size-3.5" /> Clear picks
+                </button>
+              )}
+              {joinError && <p className="text-[10px] text-destructive">{joinError}</p>}
+            </div>
           </div>
+
 
           <div className="mt-4 space-y-1">
             <button
