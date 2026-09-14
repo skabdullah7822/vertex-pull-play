@@ -53,6 +53,7 @@ import { generateThreeCode } from "./exportCode";
 import { BoxHandles, type HandleMode, type HandlePlane } from "./handles";
 import ColorPicker from "./ColorPicker";
 import { SnapGuides, hitsSolid } from "./snapping";
+import { VertexEditor } from "./vertexEdit";
 
 type Item = { id: string; name: string; kind: Kind };
 type Mode = "translate" | "rotate" | "scale" | "place";
@@ -114,6 +115,8 @@ export default function ModelEditor() {
   const gridRef = useRef<THREE.GridHelper | null>(null);
   const selectedRef = useRef<string | null>(null);
   const handlesRef = useRef<BoxHandles | null>(null);
+  const vertexRef = useRef<VertexEditor | null>(null);
+  const vertexModeRef = useRef(false);
   const orbitRef = useRef<OrbitControls | null>(null);
   const quadModeRef = useRef(false);
   const snapOnRef = useRef(true);
@@ -141,6 +144,10 @@ export default function ModelEditor() {
   const [quadMode, setQuadMode] = useState(false);
   const [quadCount, setQuadCount] = useState(0);
   const [snapOn, setSnapOn] = useState(true);
+  const [vertexMode, setVertexMode] = useState(false);
+  const [vertexCount, setVertexCount] = useState(0);
+  const [vertexRadius, setVertexRadius] = useState(0.9);
+  const [vertexStrength, setVertexStrength] = useState(1);
   const [menu, setMenu] = useState<{ x: number; y: number; id: string | null } | null>(null);
 
   const [draggedPayload, setDraggedPayload] = useState<{
@@ -160,6 +167,7 @@ export default function ModelEditor() {
   selectedRef.current = selected;
   quadModeRef.current = quadMode;
   snapOnRef.current = snapOn;
+  vertexModeRef.current = vertexMode;
 
   /* ---------------- three.js bootstrap ---------------- */
   useEffect(() => {
@@ -339,6 +347,19 @@ export default function ModelEditor() {
     scene.add(handles.group);
     handlesRef.current = handles;
 
+    const vertexEditor = new VertexEditor(
+      camera,
+      renderer.domElement,
+      tick,
+      (d) => {
+        orbit.enabled = !d;
+        transform.enabled = !d;
+      },
+      setVertexCount,
+    );
+    scene.add(vertexEditor.group);
+    vertexRef.current = vertexEditor;
+
     // viewport helper lights so the scene is never pitch black
     const hemi = new THREE.HemisphereLight(0xbfd4ff, 0x20242b, 0.55);
     scene.add(hemi);
@@ -488,9 +509,26 @@ export default function ModelEditor() {
     const onUp = (e: PointerEvent) => {
       if (e.button !== 0) return;
       if (Math.hypot(e.clientX - down.x, e.clientY - down.y) > 4) return;
-      if (transform.dragging || handles.dragging) return;
+      if (transform.dragging || handles.dragging || vertexEditor.dragging) return;
       setPointerFrom(e);
       const { id, hits } = pickId();
+
+      if (vertexModeRef.current) {
+        const selId = selectedRef.current;
+        const selObject = selId ? objectsRef.current.get(selId) : null;
+        if (selObject) {
+          const meshHits = raycaster.intersectObject(selObject, true);
+          if (meshHits.length) {
+            vertexEditor.addPointAtWorld(meshHits[0]!.point.clone());
+            return;
+          }
+        }
+        if (id && id !== selId) {
+          setSelected(id);
+          return;
+        }
+        return;
+      }
 
       if (modeRef.current === "place" && selectedRef.current) {
         const target = computeDropPosition(e.clientX, e.clientY, selectedRef.current);
@@ -622,6 +660,7 @@ export default function ModelEditor() {
     renderer.setAnimationLoop(() => {
       orbit.update();
       handles.update();
+      vertexEditor.update();
       renderer.render(scene, camera);
     });
 
@@ -649,6 +688,8 @@ export default function ModelEditor() {
       markerMat.dispose();
       snap.dispose();
       handles.dispose();
+      vertexEditor.dispose();
+      vertexRef.current = null;
       transform.detach();
       transform.dispose();
       orbit.dispose();
@@ -663,7 +704,7 @@ export default function ModelEditor() {
   useEffect(() => {
     const t = transformRef.current;
     if (!t) return;
-    if (mode === "place") {
+    if (mode === "place" || vertexMode) {
       t.detach();
       return;
     }
@@ -671,7 +712,7 @@ export default function ModelEditor() {
     if (obj) t.attach(obj);
     else t.detach();
     t.setMode(mode);
-  }, [selected, items, mode]);
+  }, [selected, items, mode, vertexMode]);
 
   useEffect(() => {
     if (mode !== "place" && dropIndicatorRef.current) {
@@ -701,6 +742,24 @@ export default function ModelEditor() {
   useEffect(() => {
     handlesRef.current?.setMode(handleMode);
   }, [handleMode]);
+
+  /* ---------------- vertex sculpting sync ---------------- */
+  useEffect(() => {
+    const v = vertexRef.current;
+    if (!v) return;
+    const obj = selected ? (objectsRef.current.get(selected) ?? null) : null;
+    v.attach(vertexMode ? obj : null);
+    v.setEnabled(vertexMode);
+    tick();
+  }, [selected, vertexMode, items, tick]);
+
+  useEffect(() => {
+    vertexRef.current?.setRadius(vertexRadius);
+  }, [vertexRadius]);
+
+  useEffect(() => {
+    vertexRef.current?.setStrength(vertexStrength);
+  }, [vertexStrength]);
 
   useEffect(() => {
     if (pointsOn) handlesRef.current?.setPlane(handlePlane);
