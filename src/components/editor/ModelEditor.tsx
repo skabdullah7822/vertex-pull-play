@@ -64,6 +64,7 @@ import { SnapGuides, hitsSolid } from "./snapping";
 import { VertexEditor } from "./vertexEdit";
 import { CutTool, sliceGeometry, carveGeometry, type CutStatus } from "./cutTool";
 import { HistoryStack, captureSnapshot, restoreSnapshot, type Snapshot } from "./history";
+import { saveProject, loadProject, clearProject } from "./projectStore";
 
 type Item = { id: string; name: string; kind: Kind };
 type Mode = "translate" | "rotate" | "scale" | "place";
