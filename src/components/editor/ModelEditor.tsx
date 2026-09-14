@@ -2223,24 +2223,35 @@ export default function ModelEditor() {
                           setOutlinerDragOverIdx(null);
                         }
                       }}
-                      onClick={() => {
+                      onClick={(e) => {
+                        if (e.ctrlKey || e.metaKey || e.shiftKey) {
+                          e.preventDefault();
+                          toggleJoinId(i.id);
+                          return;
+                        }
                         setSelected(i.id);
                         setPanelTab("properties");
                       }}
                       className={`group flex items-center justify-between rounded px-2.5 py-1.5 text-xs transition-all cursor-grab active:cursor-grabbing border ${
                         isOver
                           ? "border-primary bg-primary/20 scale-[1.01]"
+                          : joinIds.includes(i.id)
+                          ? "border-amber-400/70 bg-amber-400/15 text-amber-300"
                           : isSel
                           ? "border-primary/50 bg-primary/15 text-primary font-semibold shadow-xs"
                           : "border-transparent text-muted-foreground hover:bg-accent hover:text-foreground"
                       }`}
                     >
                       <div className="flex items-center gap-2 min-w-0">
-                        <GripVertical
-                          className={`size-3.5 shrink-0 opacity-40 group-hover:opacity-100 transition-opacity ${
-                            isSel ? "text-primary" : "text-muted-foreground"
-                          }`}
-                        />
+                        {joinIds.includes(i.id) ? (
+                          <CheckSquare className="size-3.5 shrink-0 text-amber-300" />
+                        ) : (
+                          <GripVertical
+                            className={`size-3.5 shrink-0 opacity-40 group-hover:opacity-100 transition-opacity ${
+                              isSel ? "text-primary" : "text-muted-foreground"
+                            }`}
+                          />
+                        )}
                         <span className="truncate">{i.name}</span>
                       </div>
 
