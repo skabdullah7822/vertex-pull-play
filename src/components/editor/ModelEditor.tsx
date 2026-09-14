@@ -40,6 +40,10 @@ import {
   Layers,
   Palette,
   Compass,
+  Undo2,
+  Redo2,
+  Scissors,
+  Ruler,
 } from "lucide-react";
 import {
   GEOMETRY_SPECS,
@@ -54,6 +58,8 @@ import { BoxHandles, type HandleMode, type HandlePlane } from "./handles";
 import ColorPicker from "./ColorPicker";
 import { SnapGuides, hitsSolid } from "./snapping";
 import { VertexEditor } from "./vertexEdit";
+import { CutTool, sliceGeometry, type CutStatus } from "./cutTool";
+import { HistoryStack, captureSnapshot, restoreSnapshot, type Snapshot } from "./history";
 
 type Item = { id: string; name: string; kind: Kind };
 type Mode = "translate" | "rotate" | "scale" | "place";
@@ -117,6 +123,12 @@ export default function ModelEditor() {
   const handlesRef = useRef<BoxHandles | null>(null);
   const vertexRef = useRef<VertexEditor | null>(null);
   const vertexModeRef = useRef(false);
+  const cutRef = useRef<CutTool | null>(null);
+  const cutModeRef = useRef(false);
+  const historyRef = useRef<HistoryStack>(new HistoryStack());
+  const commitRef = useRef<(() => void) | null>(null);
+  const pendingCommit = useRef(false);
+  const historyReady = useRef(false);
   const orbitRef = useRef<OrbitControls | null>(null);
   const quadModeRef = useRef(false);
   const snapOnRef = useRef(true);
@@ -148,6 +160,10 @@ export default function ModelEditor() {
   const [vertexCount, setVertexCount] = useState(0);
   const [vertexRadius, setVertexRadius] = useState(0.9);
   const [vertexStrength, setVertexStrength] = useState(1);
+  const [cutMode, setCutMode] = useState(false);
+  const [cutStatus, setCutStatus] = useState<CutStatus>({ count: 0, aligned: [], planar: false });
+  const [cutError, setCutError] = useState<string | null>(null);
+  const [histVersion, setHistVersion] = useState(0);
   const [menu, setMenu] = useState<{ x: number; y: number; id: string | null } | null>(null);
 
   const [draggedPayload, setDraggedPayload] = useState<{
@@ -168,6 +184,9 @@ export default function ModelEditor() {
   quadModeRef.current = quadMode;
   snapOnRef.current = snapOn;
   vertexModeRef.current = vertexMode;
+  cutModeRef.current = cutMode;
+  const itemsRef = useRef<Item[]>(items);
+  itemsRef.current = items;
 
   /* ---------------- three.js bootstrap ---------------- */
   useEffect(() => {
@@ -311,6 +330,7 @@ export default function ModelEditor() {
         isScaling = false;
         snap.clear();
         tick();
+        commitRef.current?.();
       }
     });
     transform.addEventListener("objectChange", () => {
@@ -343,6 +363,7 @@ export default function ModelEditor() {
     const handles = new BoxHandles(camera, renderer.domElement, tick, (d) => {
       orbit.enabled = !d;
       transform.enabled = !d;
+      if (!d) commitRef.current?.();
     });
     scene.add(handles.group);
     handlesRef.current = handles;
@@ -354,11 +375,25 @@ export default function ModelEditor() {
       (d) => {
         orbit.enabled = !d;
         transform.enabled = !d;
+        if (!d) commitRef.current?.();
       },
       setVertexCount,
     );
     scene.add(vertexEditor.group);
     vertexRef.current = vertexEditor;
+
+    const cutTool = new CutTool(
+      camera,
+      renderer.domElement,
+      tick,
+      (d) => {
+        orbit.enabled = !d;
+        transform.enabled = !d;
+      },
+      setCutStatus,
+    );
+    scene.add(cutTool.group);
+    cutRef.current = cutTool;
 
     // viewport helper lights so the scene is never pitch black
     const hemi = new THREE.HemisphereLight(0xbfd4ff, 0x20242b, 0.55);
@@ -530,6 +565,20 @@ export default function ModelEditor() {
         return;
       }
 
+      if (cutModeRef.current) {
+        let point: THREE.Vector3 | null = hits.length ? hits[0]!.point.clone() : null;
+        if (!point) {
+          const p = new THREE.Vector3();
+          point = raycaster.ray.intersectPlane(groundPlane, p) ? p.clone() : null;
+        }
+        if (!point) return;
+        if (!selectedRef.current && id) setSelected(id);
+        cutTool.addPoint(point);
+        setCutError(null);
+        return;
+      }
+
+
       if (modeRef.current === "place" && selectedRef.current) {
         const target = computeDropPosition(e.clientX, e.clientY, selectedRef.current);
         const obj = objectsRef.current.get(selectedRef.current);
@@ -661,6 +710,7 @@ export default function ModelEditor() {
       orbit.update();
       handles.update();
       vertexEditor.update();
+      cutTool.update();
       renderer.render(scene, camera);
     });
 
@@ -689,6 +739,8 @@ export default function ModelEditor() {
       snap.dispose();
       handles.dispose();
       vertexEditor.dispose();
+      cutTool.dispose();
+      cutRef.current = null;
       vertexRef.current = null;
       transform.detach();
       transform.dispose();
@@ -704,7 +756,7 @@ export default function ModelEditor() {
   useEffect(() => {
     const t = transformRef.current;
     if (!t) return;
-    if (mode === "place" || vertexMode) {
+    if (mode === "place" || vertexMode || cutMode) {
       t.detach();
       return;
     }
@@ -712,7 +764,7 @@ export default function ModelEditor() {
     if (obj) t.attach(obj);
     else t.detach();
     t.setMode(mode);
-  }, [selected, items, mode, vertexMode]);
+  }, [selected, items, mode, vertexMode, cutMode]);
 
   useEffect(() => {
     if (mode !== "place" && dropIndicatorRef.current) {
@@ -910,6 +962,164 @@ export default function ModelEditor() {
   }, []);
   addQuadRef.current = addQuadFromPoints;
 
+  /* ---------------- undo / redo ---------------- */
+  const commit = useCallback(() => {
+    historyRef.current.commit(
+      captureSnapshot(itemsRef.current, objectsRef.current, selectedRef.current),
+    );
+    setHistVersion((v) => v + 1);
+  }, []);
+  commitRef.current = commit;
+
+  const suppressCommit = useRef(false);
+  const itemsKey = items.map((i) => `${i.id}:${i.name}`).join("|");
+
+  useEffect(() => {
+    if (!historyReady.current) {
+      if (!itemsRef.current.length) return;
+      historyRef.current.reset(
+        captureSnapshot(itemsRef.current, objectsRef.current, selectedRef.current),
+      );
+      historyReady.current = true;
+      setHistVersion((v) => v + 1);
+      return;
+    }
+    if (suppressCommit.current) {
+      suppressCommit.current = false;
+      return;
+    }
+    commit();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [itemsKey]);
+
+  const applyHistory = useCallback(
+    (snap: Snapshot | null) => {
+      const scene = sceneRef.current;
+      if (!scene || !snap) return;
+      suppressCommit.current = true;
+      transformRef.current?.detach();
+      handlesRef.current?.attach(null);
+      vertexRef.current?.attach(null);
+      cutRef.current?.clear();
+      const list = restoreSnapshot(snap, scene, objectsRef.current);
+      setItems(list);
+      setSelected(snap.selected && objectsRef.current.has(snap.selected) ? snap.selected : null);
+      setHistVersion((v) => v + 1);
+      tick();
+    },
+    [tick],
+  );
+
+  const undo = useCallback(() => {
+    applyHistory(historyRef.current.undo());
+  }, [applyHistory]);
+
+  const redo = useCallback(() => {
+    applyHistory(historyRef.current.redo());
+  }, [applyHistory]);
+
+  const canUndo = historyRef.current.canUndo;
+  const canRedo = historyRef.current.canRedo;
+  void histVersion;
+
+  /* ---------------- cut tool ---------------- */
+  const applyCut = useCallback(() => {
+    const tool = cutRef.current;
+    const scene = sceneRef.current;
+    if (!tool || !scene) return;
+    const plane = tool.getPlane();
+    const id = selectedRef.current;
+    const obj = id ? objectsRef.current.get(id) : null;
+    const mesh = obj as THREE.Mesh | null;
+    if (!plane) {
+      setCutError("Place at least 3 points to define the cut area.");
+      return;
+    }
+    if (!mesh || !mesh.isMesh || !mesh.geometry) {
+      setCutError("Select the object you want to cut first.");
+      return;
+    }
+
+    mesh.updateMatrixWorld(true);
+    const inv = new THREE.Matrix4().copy(mesh.matrixWorld).invert();
+    const normalLocal = plane.normal
+      .clone()
+      .applyMatrix3(new THREE.Matrix3().getNormalMatrix(inv))
+      .normalize();
+    const pointLocal = plane.coplanarPoint(new THREE.Vector3()).applyMatrix4(inv);
+    const localPlane = new THREE.Plane().setFromNormalAndCoplanarPoint(normalLocal, pointLocal);
+
+    const res = sliceGeometry(mesh.geometry, localPlane);
+    if (!res) {
+      setCutError("The cut plane does not pass through the object.");
+      return;
+    }
+
+    const item = itemsRef.current.find((i) => i.id === id) ?? null;
+    const srcMat = mesh.material as THREE.Material;
+    const build = (arr: Float32Array) => {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", new THREE.BufferAttribute(arr, 3));
+      g.computeVertexNormals();
+      g.computeBoundingBox();
+      g.computeBoundingSphere();
+      g.userData["custom"] = true;
+      g.userData["vertexEditOwned"] = true;
+      const m = new THREE.Mesh(g, srcMat.clone());
+      m.position.copy(mesh.position);
+      m.rotation.copy(mesh.rotation);
+      m.scale.copy(mesh.scale);
+      m.castShadow = true;
+      m.receiveShadow = true;
+      m.userData["kind"] = item?.kind ?? "plane";
+      m.userData["deformed"] = true;
+      return m;
+    };
+
+    const mA = build(res.a);
+    const mB = build(res.b);
+
+    transformRef.current?.detach();
+    handlesRef.current?.attach(null);
+    vertexRef.current?.attach(null);
+    scene.remove(mesh);
+    mesh.geometry.dispose();
+    if (id) objectsRef.current.delete(id);
+
+    const idA = nextId();
+    const idB = nextId();
+    objectsRef.current.set(idA, mA);
+    objectsRef.current.set(idB, mB);
+    scene.add(mA);
+    scene.add(mB);
+
+    setItems((prev) =>
+      prev.flatMap((p) =>
+        p.id === id
+          ? [
+              { id: idA, name: `${p.name} A`, kind: p.kind },
+              { id: idB, name: `${p.name} B`, kind: p.kind },
+            ]
+          : [p],
+      ),
+    );
+    setSelected(idA);
+    tool.clear();
+    setCutMode(false);
+    setCutError(null);
+    tick();
+  }, [tick]);
+
+  useEffect(() => {
+    const c = cutRef.current;
+    if (!c) return;
+    c.setEnabled(cutMode);
+    if (!cutMode) {
+      c.clear();
+      setCutError(null);
+    }
+  }, [cutMode]);
+
   /* ---------------- right click menu actions ---------------- */
   const menuActions = useMemo(() => {
     const id = menu?.id ?? null;
@@ -1025,7 +1235,21 @@ export default function ModelEditor() {
       const target = e.target as HTMLElement;
       if (target && /input|textarea|select/i.test(target.tagName)) return;
       const k = e.key.toLowerCase();
-      if (k === "g") setMode("translate");
+      if (e.ctrlKey || e.metaKey) {
+        if (k === "z" && e.shiftKey) {
+          e.preventDefault();
+          redo();
+        } else if (k === "z") {
+          e.preventDefault();
+          undo();
+        } else if (k === "y") {
+          e.preventDefault();
+          redo();
+        }
+        return;
+      }
+      if (k === "c") setCutMode((v) => !v);
+      else if (k === "g") setMode("translate");
       else if (k === "r") setMode("rotate");
       else if (k === "s") setMode("scale");
       else if (k === "p") setMode("place");
@@ -1039,11 +1263,12 @@ export default function ModelEditor() {
         setVertexMode(false);
         cancelQuadRef.current?.();
         setQuadMode(false);
+        setCutMode(false);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [removeSelected, duplicateSelected]);
+  }, [removeSelected, duplicateSelected, undo, redo]);
 
   const setCameraPreset = (preset: "iso" | "top" | "front" | "side") => {
     const cam = cameraRef.current;
@@ -1095,9 +1320,27 @@ export default function ModelEditor() {
           <span className="text-sm font-semibold tracking-tight">RenderCraft Modeler</span>
         </div>
         <span className="hidden text-xs text-muted-foreground sm:inline">
-          G move · R rotate · S scale (Ctrl: 2 sides) · Shift+D duplicate · X delete · Right-click for tools
+          G move · R rotate · S scale · C cut · Ctrl+Z undo · Ctrl+Shift+Z redo · X delete
         </span>
         <div className="ml-auto flex items-center gap-2">
+          <div className="flex items-center gap-1">
+            <button
+              onClick={undo}
+              disabled={!canUndo}
+              title="Undo (Ctrl+Z)"
+              className="inline-flex items-center gap-1.5 rounded-md border border-border bg-secondary px-2.5 py-1.5 text-xs font-medium cursor-pointer transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Undo2 className="size-3.5" /> Undo
+            </button>
+            <button
+              onClick={redo}
+              disabled={!canRedo}
+              title="Redo (Ctrl+Shift+Z)"
+              className="inline-flex items-center gap-1.5 rounded-md border border-border bg-secondary px-2.5 py-1.5 text-xs font-medium cursor-pointer transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Redo2 className="size-3.5" /> Redo
+            </button>
+          </div>
           <button
             onClick={() => setSidebarOpen((v) => !v)}
             title="Toggle Inspector & Properties Panel"
@@ -1410,6 +1653,63 @@ export default function ModelEditor() {
             >
               <Magnet className="size-3.5" /> {snapOn ? "Snap on" : "Snap off"}
             </button>
+            <button
+              onClick={() => setCutMode((v) => !v)}
+              className={`flex w-full items-center gap-2 rounded-md border px-2 py-1.5 text-[11px] cursor-pointer transition-colors ${
+                cutMode
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "border-border bg-secondary text-muted-foreground hover:bg-accent hover:text-foreground"
+              }`}
+            >
+              <Scissors className="size-3.5" /> {cutMode ? "Cutting..." : "Cut tool (C)"}
+            </button>
+            {cutMode && (
+              <div className="space-y-1 rounded-md border border-primary/40 bg-secondary/50 p-2">
+                <p className="text-[10px] text-muted-foreground">
+                  Click 4 or more points around the area. The region fills with colour, points can
+                  be dragged, and guides show when they line up.
+                </p>
+                <div className="flex flex-wrap gap-1">
+                  {cutStatus.aligned.slice(0, 4).map((a) => (
+                    <span
+                      key={a}
+                      className="rounded bg-primary/20 px-1.5 py-0.5 text-[9px] text-primary"
+                    >
+                      {a}
+                    </span>
+                  ))}
+                </div>
+                <button
+                  onClick={() => cutRef.current?.flatten()}
+                  className="flex w-full items-center gap-2 rounded-md border border-border bg-secondary px-2 py-1.5 text-[11px] text-muted-foreground cursor-pointer transition-colors hover:bg-accent hover:text-foreground"
+                >
+                  <Ruler className="size-3.5" /> Make area perfectly flat
+                </button>
+                <button
+                  onClick={() => cutRef.current?.removeLast()}
+                  className="flex w-full items-center gap-2 rounded-md border border-border bg-secondary px-2 py-1.5 text-[11px] text-muted-foreground cursor-pointer transition-colors hover:bg-accent hover:text-foreground"
+                >
+                  <RotateCcw className="size-3.5" /> Remove last point
+                </button>
+                <button
+                  onClick={() => {
+                    cutRef.current?.clear();
+                    setCutError(null);
+                  }}
+                  className="flex w-full items-center gap-2 rounded-md border border-border bg-secondary px-2 py-1.5 text-[11px] text-muted-foreground cursor-pointer transition-colors hover:bg-accent hover:text-foreground"
+                >
+                  <Trash2 className="size-3.5" /> Clear points
+                </button>
+                <button
+                  onClick={applyCut}
+                  disabled={cutStatus.count < 3}
+                  className="flex w-full items-center gap-2 rounded-md bg-primary px-2 py-1.5 text-[11px] font-semibold text-primary-foreground cursor-pointer transition-colors hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <Scissors className="size-3.5" /> Apply cut
+                </button>
+                {cutError && <p className="text-[10px] text-destructive">{cutError}</p>}
+              </div>
+            )}
           </div>
 
           <div className="mt-4 space-y-1">
@@ -1574,6 +1874,22 @@ export default function ModelEditor() {
           {quadMode && (
             <div className="pointer-events-none absolute left-1/2 top-3 z-10 -translate-x-1/2 rounded-md border border-border bg-card/90 px-3 py-1.5 text-[11px] text-muted-foreground backdrop-blur">
               Click 4 points in the viewport to build a quad ({quadCount}/4)
+            </div>
+          )}
+
+          {cutMode && (
+            <div className="pointer-events-none absolute left-1/2 bottom-4 z-10 -translate-x-1/2 rounded-md border border-primary/40 bg-card/90 px-3 py-1.5 text-[11px] text-foreground backdrop-blur">
+              <strong className="text-primary">Cut:</strong> {cutStatus.count} point
+              {cutStatus.count === 1 ? "" : "s"} placed · drag them to align
+              {cutStatus.aligned.length > 0 && (
+                <span className="text-primary"> · {cutStatus.aligned[0]}</span>
+              )}
+              {cutStatus.count >= 3 && (
+                <span className={cutStatus.planar ? "text-green-400" : "text-amber-400"}>
+                  {" "}
+                  · {cutStatus.planar ? "area is flat" : "area is not flat"}
+                </span>
+              )}
             </div>
           )}
 
