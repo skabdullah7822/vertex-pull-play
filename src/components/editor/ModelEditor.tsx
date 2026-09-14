@@ -44,6 +44,10 @@ import {
   Redo2,
   Scissors,
   Ruler,
+  Eraser,
+  Combine,
+  CheckSquare,
+  SquareDashed,
 } from "lucide-react";
 import {
   GEOMETRY_SPECS,
@@ -58,7 +62,7 @@ import { BoxHandles, type HandleMode, type HandlePlane } from "./handles";
 import ColorPicker from "./ColorPicker";
 import { SnapGuides, hitsSolid } from "./snapping";
 import { VertexEditor } from "./vertexEdit";
-import { CutTool, sliceGeometry, type CutStatus } from "./cutTool";
+import { CutTool, sliceGeometry, carveGeometry, type CutStatus } from "./cutTool";
 import { HistoryStack, captureSnapshot, restoreSnapshot, type Snapshot } from "./history";
 
 type Item = { id: string; name: string; kind: Kind };
