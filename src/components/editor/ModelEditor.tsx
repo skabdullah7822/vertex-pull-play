@@ -1029,12 +1029,14 @@ export default function ModelEditor() {
       else if (k === "r") setMode("rotate");
       else if (k === "s") setMode("scale");
       else if (k === "p") setMode("place");
+      else if (k === "v") setVertexMode((v) => !v);
       else if (k === "x" || k === "delete") removeSelected();
       else if (k === "d" && e.shiftKey) {
         e.preventDefault();
         duplicateSelected();
       } else if (k === "escape") {
         if (modeRef.current === "place") setMode("translate");
+        setVertexMode(false);
         cancelQuadRef.current?.();
         setQuadMode(false);
       }
@@ -1305,6 +1307,83 @@ export default function ModelEditor() {
           </div>
 
           <p className="px-1 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            Vertex Sculpt
+          </p>
+          <div className="space-y-1">
+            <button
+              onClick={() => setVertexMode((v) => !v)}
+              title="Click on the selected object to drop points, then drag them (V)"
+              className={`flex w-full items-center gap-2 rounded-md border px-2 py-1.5 text-[11px] cursor-pointer transition-colors ${
+                vertexMode
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "border-border bg-secondary text-muted-foreground hover:bg-accent hover:text-foreground"
+              }`}
+            >
+              <Target className="size-3.5" /> {vertexMode ? `Sculpting (${vertexCount})` : "Vertex drag"}
+            </button>
+
+            {vertexMode && (
+              <>
+                <label className="block px-0.5 pt-1 text-[10px] text-muted-foreground">
+                  <span className="flex items-center justify-between">
+                    <span className="inline-flex items-center gap-1">
+                      <Compass className="size-3" /> Falloff
+                    </span>
+                    <span className="font-mono">{vertexRadius.toFixed(2)}</span>
+                  </span>
+                  <input
+                    type="range"
+                    min={0.05}
+                    max={3}
+                    step={0.05}
+                    value={vertexRadius}
+                    onChange={(e) => setVertexRadius(parseFloat(e.target.value))}
+                    className="mt-1 w-full accent-primary cursor-pointer"
+                  />
+                </label>
+                <label className="block px-0.5 text-[10px] text-muted-foreground">
+                  <span className="flex items-center justify-between">
+                    <span className="inline-flex items-center gap-1">
+                      <GripVertical className="size-3" /> Strength
+                    </span>
+                    <span className="font-mono">{vertexStrength.toFixed(2)}</span>
+                  </span>
+                  <input
+                    type="range"
+                    min={0.1}
+                    max={2}
+                    step={0.05}
+                    value={vertexStrength}
+                    onChange={(e) => setVertexStrength(parseFloat(e.target.value))}
+                    className="mt-1 w-full accent-primary cursor-pointer"
+                  />
+                </label>
+                <button
+                  onClick={() => vertexRef.current?.removeLastPoint()}
+                  className="flex w-full items-center gap-2 rounded-md border border-border bg-secondary px-2 py-1.5 text-[11px] text-muted-foreground cursor-pointer transition-colors hover:bg-accent hover:text-foreground"
+                >
+                  <RotateCcw className="size-3.5" /> Undo last point
+                </button>
+                <button
+                  onClick={() => vertexRef.current?.clearPoints()}
+                  className="flex w-full items-center gap-2 rounded-md border border-border bg-secondary px-2 py-1.5 text-[11px] text-muted-foreground cursor-pointer transition-colors hover:bg-accent hover:text-foreground"
+                >
+                  <Trash2 className="size-3.5" /> Clear points
+                </button>
+                <button
+                  onClick={() => vertexRef.current?.resetShape()}
+                  className="flex w-full items-center gap-2 rounded-md border border-border bg-secondary px-2 py-1.5 text-[11px] text-muted-foreground cursor-pointer transition-colors hover:bg-accent hover:text-foreground"
+                >
+                  <RotateCcw className="size-3.5" /> Reset mesh shape
+                </button>
+                <p className="px-0.5 text-[9px] text-muted-foreground">
+                  Click the selected mesh to drop a point, then drag the point to pull the surface.
+                </p>
+              </>
+            )}
+          </div>
+
+          <p className="px-1 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
             Tools
           </p>
           <div className="space-y-1">
@@ -1482,6 +1561,13 @@ export default function ModelEditor() {
                   </span>
                 </span>
               )}
+            </div>
+          )}
+
+          {vertexMode && (
+            <div className="pointer-events-none absolute left-1/2 bottom-4 z-10 -translate-x-1/2 rounded-md border border-primary/40 bg-card/90 px-3 py-1.5 text-[11px] text-foreground backdrop-blur">
+              <strong className="text-primary">Vertex drag:</strong> click the selected object to add a
+              point ({vertexCount}) · drag a point to reshape · Esc to exit
             </div>
           )}
 
