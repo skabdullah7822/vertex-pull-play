@@ -1116,6 +1116,166 @@ export default function ModelEditor() {
     tick();
   }, [tick]);
 
+  /* remove everything inside the point cage (punch the area out) */
+  const removeInside = useCallback(() => {
+    const tool = cutRef.current;
+    if (!tool) return;
+    const plane = tool.getPlane();
+    const pts = tool.getPoints();
+    const id = selectedRef.current;
+    const obj = id ? objectsRef.current.get(id) : null;
+    const mesh = obj as THREE.Mesh | null;
+    if (!plane || pts.length < 3) {
+      setCutError("Place at least 3 points around the area you want to remove.");
+      return;
+    }
+    if (!mesh || !mesh.isMesh || !mesh.geometry) {
+      setCutError("Select the object you want to cut first.");
+      return;
+    }
+
+    mesh.updateMatrixWorld(true);
+    const inv = new THREE.Matrix4().copy(mesh.matrixWorld).invert();
+    const normalLocal = plane.normal
+      .clone()
+      .applyMatrix3(new THREE.Matrix3().getNormalMatrix(inv))
+      .normalize();
+    const polyLocal = pts.map((p) => p.clone().applyMatrix4(inv));
+
+    const arr = carveGeometry(mesh.geometry, polyLocal, normalLocal);
+    if (!arr) {
+      setCutError("That area does not cover any part of the object.");
+      return;
+    }
+
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(arr, 3));
+    g.computeVertexNormals();
+    g.computeBoundingBox();
+    g.computeBoundingSphere();
+    g.userData["custom"] = true;
+    g.userData["vertexEditOwned"] = true;
+
+    vertexRef.current?.attach(null);
+    const old = mesh.geometry;
+    mesh.geometry = g;
+    old.dispose();
+    mesh.userData["deformed"] = true;
+
+    tool.clear();
+    setCutMode(false);
+    setCutError(null);
+    setItems((prev) => [...prev]);
+    tick();
+  }, [tick]);
+
+  /* ---------------- join objects into one ---------------- */
+  const toggleJoinId = useCallback((id: string) => {
+    setJoinError(null);
+    setJoinIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }, []);
+
+  const joinObjects = useCallback(() => {
+    const scene = sceneRef.current;
+    if (!scene) return;
+    const ids = Array.from(new Set(joinIds));
+    const meshes = ids
+      .map((id) => ({ id, obj: objectsRef.current.get(id) }))
+      .filter((e): e is { id: string; obj: THREE.Mesh } => {
+        const m = e.obj as THREE.Mesh | undefined;
+        return !!m && (m as THREE.Mesh).isMesh === true && !!m.geometry;
+      });
+    if (meshes.length < 2) {
+      setJoinError("Pick at least 2 meshes in the outliner to join.");
+      return;
+    }
+
+    const center = new THREE.Vector3();
+    for (const { obj } of meshes) {
+      obj.updateMatrixWorld(true);
+      center.add(obj.getWorldPosition(new THREE.Vector3()));
+    }
+    center.multiplyScalar(1 / meshes.length);
+
+    const positions: number[] = [];
+    const toLocal = new THREE.Matrix4().makeTranslation(-center.x, -center.y, -center.z);
+    for (const { obj } of meshes) {
+      const src = obj.geometry.index ? obj.geometry.toNonIndexed() : obj.geometry;
+      const pos = src.getAttribute("position") as THREE.BufferAttribute | undefined;
+      if (pos) {
+        const m = new THREE.Matrix4().multiplyMatrices(toLocal, obj.matrixWorld);
+        const p = new THREE.Vector3();
+        for (let i = 0; i < pos.count; i++) {
+          p.set(pos.getX(i), pos.getY(i), pos.getZ(i)).applyMatrix4(m);
+          positions.push(p.x, p.y, p.z);
+        }
+      }
+      if (src !== obj.geometry) src.dispose();
+    }
+    if (!positions.length) {
+      setJoinError("These objects have no geometry to join.");
+      return;
+    }
+
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(positions), 3));
+    g.computeVertexNormals();
+    g.computeBoundingBox();
+    g.computeBoundingSphere();
+    g.userData["custom"] = true;
+    g.userData["vertexEditOwned"] = true;
+
+    const first = meshes[0]!.obj;
+    const baseMat = first.material as THREE.Material;
+    const merged = new THREE.Mesh(g, baseMat.clone());
+    merged.position.copy(center);
+    merged.castShadow = true;
+    merged.receiveShadow = true;
+    merged.userData["kind"] = first.userData["kind"] ?? "plane";
+    merged.userData["deformed"] = true;
+
+    transformRef.current?.detach();
+    handlesRef.current?.attach(null);
+    vertexRef.current?.attach(null);
+
+    const idSet = new Set(meshes.map((m) => m.id));
+    for (const { id, obj } of meshes) {
+      scene.remove(obj);
+      obj.geometry.dispose();
+      objectsRef.current.delete(id);
+    }
+
+    const newId = nextId();
+    objectsRef.current.set(newId, merged);
+    scene.add(merged);
+
+    const firstItem = itemsRef.current.find((i) => idSet.has(i.id));
+    setItems((prev) => {
+      const out: Item[] = [];
+      let placed = false;
+      for (const p of prev) {
+        if (idSet.has(p.id)) {
+          if (!placed) {
+            out.push({
+              id: newId,
+              name: `${firstItem?.name ?? "Mesh"} (joined)`,
+              kind: (firstItem?.kind ?? "plane") as Kind,
+            });
+            placed = true;
+          }
+          continue;
+        }
+        out.push(p);
+      }
+      return out;
+    });
+    setSelected(newId);
+    setJoinIds([]);
+    setJoinError(null);
+    tick();
+  }, [joinIds, tick]);
+
+
   useEffect(() => {
     const c = cutRef.current;
     if (!c) return;
