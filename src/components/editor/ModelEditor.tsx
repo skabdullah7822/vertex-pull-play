@@ -1411,6 +1411,9 @@ export default function ModelEditor() {
         } else if (k === "y") {
           e.preventDefault();
           redo();
+        } else if (k === "j") {
+          e.preventDefault();
+          joinObjects();
         }
         return;
       }
