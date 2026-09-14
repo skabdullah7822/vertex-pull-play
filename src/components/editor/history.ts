@@ -135,7 +135,7 @@ function buildFromSnap(s: ObjSnap): THREE.Object3D {
     geo.userData["vertexEditOwned"] = true;
     geo.userData["custom"] = true;
   } else {
-    geo = createGeometry(s.kind as Exclude<Kind, never>);
+    geo = createGeometry(s.kind as Parameters<typeof createGeometry>[0]);
   }
   const mesh = new THREE.Mesh(
     geo,
