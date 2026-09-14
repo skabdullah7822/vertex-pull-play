@@ -1489,7 +1489,8 @@ export default function ModelEditor() {
           <span className="text-sm font-semibold tracking-tight">RenderCraft Modeler</span>
         </div>
         <span className="hidden text-xs text-muted-foreground sm:inline">
-          G move · R rotate · S scale · C cut · Ctrl+Z undo · Ctrl+Shift+Z redo · X delete
+          G move · R rotate · S scale · C cut · Ctrl+J join · Ctrl+Z undo · Ctrl+Shift+Z redo · X
+          delete
         </span>
         <div className="ml-auto flex items-center gap-2">
           <div className="flex items-center gap-1">
