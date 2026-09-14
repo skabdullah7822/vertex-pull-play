@@ -363,6 +363,7 @@ export default function ModelEditor() {
     const handles = new BoxHandles(camera, renderer.domElement, tick, (d) => {
       orbit.enabled = !d;
       transform.enabled = !d;
+      if (!d) commitRef.current?.();
     });
     scene.add(handles.group);
     handlesRef.current = handles;
@@ -960,6 +961,164 @@ export default function ModelEditor() {
     setSelected(id);
   }, []);
   addQuadRef.current = addQuadFromPoints;
+
+  /* ---------------- undo / redo ---------------- */
+  const commit = useCallback(() => {
+    historyRef.current.commit(
+      captureSnapshot(itemsRef.current, objectsRef.current, selectedRef.current),
+    );
+    setHistVersion((v) => v + 1);
+  }, []);
+  commitRef.current = commit;
+
+  const suppressCommit = useRef(false);
+  const itemsKey = items.map((i) => `${i.id}:${i.name}`).join("|");
+
+  useEffect(() => {
+    if (!historyReady.current) {
+      if (!itemsRef.current.length) return;
+      historyRef.current.reset(
+        captureSnapshot(itemsRef.current, objectsRef.current, selectedRef.current),
+      );
+      historyReady.current = true;
+      setHistVersion((v) => v + 1);
+      return;
+    }
+    if (suppressCommit.current) {
+      suppressCommit.current = false;
+      return;
+    }
+    commit();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [itemsKey]);
+
+  const applyHistory = useCallback(
+    (snap: Snapshot | null) => {
+      const scene = sceneRef.current;
+      if (!scene || !snap) return;
+      suppressCommit.current = true;
+      transformRef.current?.detach();
+      handlesRef.current?.attach(null);
+      vertexRef.current?.attach(null);
+      cutRef.current?.clear();
+      const list = restoreSnapshot(snap, scene, objectsRef.current);
+      setItems(list);
+      setSelected(snap.selected && objectsRef.current.has(snap.selected) ? snap.selected : null);
+      setHistVersion((v) => v + 1);
+      tick();
+    },
+    [tick],
+  );
+
+  const undo = useCallback(() => {
+    applyHistory(historyRef.current.undo());
+  }, [applyHistory]);
+
+  const redo = useCallback(() => {
+    applyHistory(historyRef.current.redo());
+  }, [applyHistory]);
+
+  const canUndo = historyRef.current.canUndo;
+  const canRedo = historyRef.current.canRedo;
+  void histVersion;
+
+  /* ---------------- cut tool ---------------- */
+  const applyCut = useCallback(() => {
+    const tool = cutRef.current;
+    const scene = sceneRef.current;
+    if (!tool || !scene) return;
+    const plane = tool.getPlane();
+    const id = selectedRef.current;
+    const obj = id ? objectsRef.current.get(id) : null;
+    const mesh = obj as THREE.Mesh | null;
+    if (!plane) {
+      setCutError("Place at least 3 points to define the cut area.");
+      return;
+    }
+    if (!mesh || !mesh.isMesh || !mesh.geometry) {
+      setCutError("Select the object you want to cut first.");
+      return;
+    }
+
+    mesh.updateMatrixWorld(true);
+    const inv = new THREE.Matrix4().copy(mesh.matrixWorld).invert();
+    const normalLocal = plane.normal
+      .clone()
+      .applyMatrix3(new THREE.Matrix3().getNormalMatrix(inv))
+      .normalize();
+    const pointLocal = plane.coplanarPoint(new THREE.Vector3()).applyMatrix4(inv);
+    const localPlane = new THREE.Plane().setFromNormalAndCoplanarPoint(normalLocal, pointLocal);
+
+    const res = sliceGeometry(mesh.geometry, localPlane);
+    if (!res) {
+      setCutError("The cut plane does not pass through the object.");
+      return;
+    }
+
+    const item = itemsRef.current.find((i) => i.id === id) ?? null;
+    const srcMat = mesh.material as THREE.Material;
+    const build = (arr: Float32Array) => {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", new THREE.BufferAttribute(arr, 3));
+      g.computeVertexNormals();
+      g.computeBoundingBox();
+      g.computeBoundingSphere();
+      g.userData["custom"] = true;
+      g.userData["vertexEditOwned"] = true;
+      const m = new THREE.Mesh(g, srcMat.clone());
+      m.position.copy(mesh.position);
+      m.rotation.copy(mesh.rotation);
+      m.scale.copy(mesh.scale);
+      m.castShadow = true;
+      m.receiveShadow = true;
+      m.userData["kind"] = item?.kind ?? "plane";
+      m.userData["deformed"] = true;
+      return m;
+    };
+
+    const mA = build(res.a);
+    const mB = build(res.b);
+
+    transformRef.current?.detach();
+    handlesRef.current?.attach(null);
+    vertexRef.current?.attach(null);
+    scene.remove(mesh);
+    mesh.geometry.dispose();
+    if (id) objectsRef.current.delete(id);
+
+    const idA = nextId();
+    const idB = nextId();
+    objectsRef.current.set(idA, mA);
+    objectsRef.current.set(idB, mB);
+    scene.add(mA);
+    scene.add(mB);
+
+    setItems((prev) =>
+      prev.flatMap((p) =>
+        p.id === id
+          ? [
+              { id: idA, name: `${p.name} A`, kind: p.kind },
+              { id: idB, name: `${p.name} B`, kind: p.kind },
+            ]
+          : [p],
+      ),
+    );
+    setSelected(idA);
+    tool.clear();
+    setCutMode(false);
+    setCutError(null);
+    tick();
+  }, [tick]);
+
+  useEffect(() => {
+    const c = cutRef.current;
+    if (!c) return;
+    c.setEnabled(cutMode);
+    if (!cutMode) {
+      c.clear();
+      setCutError(null);
+    }
+  }, [cutMode]);
 
   /* ---------------- right click menu actions ---------------- */
   const menuActions = useMemo(() => {
