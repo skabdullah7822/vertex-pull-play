@@ -1286,6 +1286,13 @@ export default function ModelEditor() {
     }
   }, [cutMode]);
 
+  useEffect(() => {
+    setJoinIds((prev) => {
+      const next = prev.filter((id) => items.some((i) => i.id === id));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [items]);
+
   /* ---------------- right click menu actions ---------------- */
   const menuActions = useMemo(() => {
     const id = menu?.id ?? null;
