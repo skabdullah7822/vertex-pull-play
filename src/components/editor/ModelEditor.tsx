@@ -40,6 +40,10 @@ import {
   Layers,
   Palette,
   Compass,
+  Undo2,
+  Redo2,
+  Scissors,
+  Ruler,
 } from "lucide-react";
 import {
   GEOMETRY_SPECS,
@@ -54,6 +58,8 @@ import { BoxHandles, type HandleMode, type HandlePlane } from "./handles";
 import ColorPicker from "./ColorPicker";
 import { SnapGuides, hitsSolid } from "./snapping";
 import { VertexEditor } from "./vertexEdit";
+import { CutTool, sliceGeometry, type CutStatus } from "./cutTool";
+import { HistoryStack, captureSnapshot, restoreSnapshot, type Snapshot } from "./history";
 
 type Item = { id: string; name: string; kind: Kind };
 type Mode = "translate" | "rotate" | "scale" | "place";
@@ -117,6 +123,12 @@ export default function ModelEditor() {
   const handlesRef = useRef<BoxHandles | null>(null);
   const vertexRef = useRef<VertexEditor | null>(null);
   const vertexModeRef = useRef(false);
+  const cutRef = useRef<CutTool | null>(null);
+  const cutModeRef = useRef(false);
+  const historyRef = useRef<HistoryStack>(new HistoryStack());
+  const commitRef = useRef<(() => void) | null>(null);
+  const pendingCommit = useRef(false);
+  const historyReady = useRef(false);
   const orbitRef = useRef<OrbitControls | null>(null);
   const quadModeRef = useRef(false);
   const snapOnRef = useRef(true);
@@ -148,6 +160,10 @@ export default function ModelEditor() {
   const [vertexCount, setVertexCount] = useState(0);
   const [vertexRadius, setVertexRadius] = useState(0.9);
   const [vertexStrength, setVertexStrength] = useState(1);
+  const [cutMode, setCutMode] = useState(false);
+  const [cutStatus, setCutStatus] = useState<CutStatus>({ count: 0, aligned: [], planar: false });
+  const [cutError, setCutError] = useState<string | null>(null);
+  const [histVersion, setHistVersion] = useState(0);
   const [menu, setMenu] = useState<{ x: number; y: number; id: string | null } | null>(null);
 
   const [draggedPayload, setDraggedPayload] = useState<{
@@ -168,6 +184,9 @@ export default function ModelEditor() {
   quadModeRef.current = quadMode;
   snapOnRef.current = snapOn;
   vertexModeRef.current = vertexMode;
+  cutModeRef.current = cutMode;
+  const itemsRef = useRef<Item[]>(items);
+  itemsRef.current = items;
 
   /* ---------------- three.js bootstrap ---------------- */
   useEffect(() => {
