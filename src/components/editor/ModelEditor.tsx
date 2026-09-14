@@ -1235,7 +1235,21 @@ export default function ModelEditor() {
       const target = e.target as HTMLElement;
       if (target && /input|textarea|select/i.test(target.tagName)) return;
       const k = e.key.toLowerCase();
-      if (k === "g") setMode("translate");
+      if (e.ctrlKey || e.metaKey) {
+        if (k === "z" && e.shiftKey) {
+          e.preventDefault();
+          redo();
+        } else if (k === "z") {
+          e.preventDefault();
+          undo();
+        } else if (k === "y") {
+          e.preventDefault();
+          redo();
+        }
+        return;
+      }
+      if (k === "c") setCutMode((v) => !v);
+      else if (k === "g") setMode("translate");
       else if (k === "r") setMode("rotate");
       else if (k === "s") setMode("scale");
       else if (k === "p") setMode("place");
@@ -1249,11 +1263,12 @@ export default function ModelEditor() {
         setVertexMode(false);
         cancelQuadRef.current?.();
         setQuadMode(false);
+        setCutMode(false);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [removeSelected, duplicateSelected]);
+  }, [removeSelected, duplicateSelected, undo, redo]);
 
   const setCameraPreset = (preset: "iso" | "top" | "front" | "side") => {
     const cam = cameraRef.current;
@@ -1620,6 +1635,63 @@ export default function ModelEditor() {
             >
               <Magnet className="size-3.5" /> {snapOn ? "Snap on" : "Snap off"}
             </button>
+            <button
+              onClick={() => setCutMode((v) => !v)}
+              className={`flex w-full items-center gap-2 rounded-md border px-2 py-1.5 text-[11px] cursor-pointer transition-colors ${
+                cutMode
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "border-border bg-secondary text-muted-foreground hover:bg-accent hover:text-foreground"
+              }`}
+            >
+              <Scissors className="size-3.5" /> {cutMode ? "Cutting..." : "Cut tool (C)"}
+            </button>
+            {cutMode && (
+              <div className="space-y-1 rounded-md border border-primary/40 bg-secondary/50 p-2">
+                <p className="text-[10px] text-muted-foreground">
+                  Click 4 or more points around the area. The region fills with colour, points can
+                  be dragged, and guides show when they line up.
+                </p>
+                <div className="flex flex-wrap gap-1">
+                  {cutStatus.aligned.slice(0, 4).map((a) => (
+                    <span
+                      key={a}
+                      className="rounded bg-primary/20 px-1.5 py-0.5 text-[9px] text-primary"
+                    >
+                      {a}
+                    </span>
+                  ))}
+                </div>
+                <button
+                  onClick={() => cutRef.current?.flatten()}
+                  className="flex w-full items-center gap-2 rounded-md border border-border bg-secondary px-2 py-1.5 text-[11px] text-muted-foreground cursor-pointer transition-colors hover:bg-accent hover:text-foreground"
+                >
+                  <Ruler className="size-3.5" /> Make area perfectly flat
+                </button>
+                <button
+                  onClick={() => cutRef.current?.removeLast()}
+                  className="flex w-full items-center gap-2 rounded-md border border-border bg-secondary px-2 py-1.5 text-[11px] text-muted-foreground cursor-pointer transition-colors hover:bg-accent hover:text-foreground"
+                >
+                  <RotateCcw className="size-3.5" /> Remove last point
+                </button>
+                <button
+                  onClick={() => {
+                    cutRef.current?.clear();
+                    setCutError(null);
+                  }}
+                  className="flex w-full items-center gap-2 rounded-md border border-border bg-secondary px-2 py-1.5 text-[11px] text-muted-foreground cursor-pointer transition-colors hover:bg-accent hover:text-foreground"
+                >
+                  <Trash2 className="size-3.5" /> Clear points
+                </button>
+                <button
+                  onClick={applyCut}
+                  disabled={cutStatus.count < 3}
+                  className="flex w-full items-center gap-2 rounded-md bg-primary px-2 py-1.5 text-[11px] font-semibold text-primary-foreground cursor-pointer transition-colors hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <Scissors className="size-3.5" /> Apply cut
+                </button>
+                {cutError && <p className="text-[10px] text-destructive">{cutError}</p>}
+              </div>
+            )}
           </div>
 
           <div className="mt-4 space-y-1">
@@ -1784,6 +1856,22 @@ export default function ModelEditor() {
           {quadMode && (
             <div className="pointer-events-none absolute left-1/2 top-3 z-10 -translate-x-1/2 rounded-md border border-border bg-card/90 px-3 py-1.5 text-[11px] text-muted-foreground backdrop-blur">
               Click 4 points in the viewport to build a quad ({quadCount}/4)
+            </div>
+          )}
+
+          {cutMode && (
+            <div className="pointer-events-none absolute left-1/2 bottom-4 z-10 -translate-x-1/2 rounded-md border border-primary/40 bg-card/90 px-3 py-1.5 text-[11px] text-foreground backdrop-blur">
+              <strong className="text-primary">Cut:</strong> {cutStatus.count} point
+              {cutStatus.count === 1 ? "" : "s"} placed · drag them to align
+              {cutStatus.aligned.length > 0 && (
+                <span className="text-primary"> · {cutStatus.aligned[0]}</span>
+              )}
+              {cutStatus.count >= 3 && (
+                <span className={cutStatus.planar ? "text-green-400" : "text-amber-400"}>
+                  {" "}
+                  · {cutStatus.planar ? "area is flat" : "area is not flat"}
+                </span>
+              )}
             </div>
           )}
 
