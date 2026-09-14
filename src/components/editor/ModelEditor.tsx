@@ -167,6 +167,8 @@ export default function ModelEditor() {
   const [cutMode, setCutMode] = useState(false);
   const [cutStatus, setCutStatus] = useState<CutStatus>({ count: 0, aligned: [], planar: false });
   const [cutError, setCutError] = useState<string | null>(null);
+  const [joinIds, setJoinIds] = useState<string[]>([]);
+  const [joinError, setJoinError] = useState<string | null>(null);
   const [histVersion, setHistVersion] = useState(0);
   const [menu, setMenu] = useState<{ x: number; y: number; id: string | null } | null>(null);
 
