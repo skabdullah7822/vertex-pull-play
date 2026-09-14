@@ -70,7 +70,7 @@ function placeObjectAt(obj: THREE.Object3D, targetPoint: THREE.Vector3) {
       return;
     }
   }
-  const isLightObj = isLight(obj.userData?.kind || "");
+  const isLightObj = isLight(obj.userData?.['kind'] || "");
   if (isLightObj) {
     obj.position.set(targetPoint.x, targetPoint.y + 1.8, targetPoint.z);
     obj.updateMatrixWorld(true);

@@ -339,6 +339,7 @@ export class VertexEditor {
     } else {
       this.dragStartLocal.copy(this.points[idx]!.local);
     }
+    this.dragOrigins = this.points.map((p) => p.local.clone());
     e.stopPropagation();
   }
 
@@ -369,7 +370,7 @@ export class VertexEditor {
     this.mesh.userData["deformed"] = true;
 
     // drag the marker itself, plus any other marker inside the affected area
-    pt.local.copy(pt.dragOrigin ?? pt.local);
+    void pt;
     this.moveMarkers(delta);
     this.update();
     this.onTick();
