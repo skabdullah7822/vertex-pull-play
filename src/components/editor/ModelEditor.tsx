@@ -1555,6 +1555,7 @@ export default function ModelEditor() {
         cancelQuadRef.current?.();
         setQuadMode(false);
         setCutMode(false);
+        setJoinPickMode(false);
       }
     };
     window.addEventListener("keydown", onKey);
