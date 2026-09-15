@@ -1044,6 +1044,25 @@ export default function ModelEditor() {
   const canRedo = historyRef.current.canRedo;
   void histVersion;
 
+  /* ---------------- local autosave ---------------- */
+  useEffect(() => {
+    if (!historyReady.current) return;
+    const t = window.setTimeout(() => {
+      const at = saveProject(
+        captureSnapshot(itemsRef.current, objectsRef.current, selectedRef.current),
+        bgColor,
+      );
+      if (at) setSavedAt(at);
+    }, 600);
+    return () => window.clearTimeout(t);
+  }, [histVersion, bgColor]);
+
+  const newScene = useCallback(() => {
+    clearProject();
+    setSavedAt(null);
+    if (typeof window !== "undefined") window.location.reload();
+  }, []);
+
   /* ---------------- cut tool ---------------- */
   const applyCut = useCallback(() => {
     const tool = cutRef.current;
