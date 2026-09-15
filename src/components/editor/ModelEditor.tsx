@@ -177,6 +177,8 @@ export default function ModelEditor() {
   const [cutError, setCutError] = useState<string | null>(null);
   const [joinIds, setJoinIds] = useState<string[]>([]);
   const [joinError, setJoinError] = useState<string | null>(null);
+  const [joinPickMode, setJoinPickMode] = useState(false);
+  const joinPickModeRef = useRef(false);
   const [histVersion, setHistVersion] = useState(0);
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [walkMode, setWalkMode] = useState(false);
@@ -208,6 +210,7 @@ export default function ModelEditor() {
   vertexModeRef.current = vertexMode;
   cutModeRef.current = cutMode;
   walkModeRef.current = walkMode;
+  joinPickModeRef.current = joinPickMode;
   const itemsRef = useRef<Item[]>(items);
   itemsRef.current = items;
 
@@ -595,6 +598,16 @@ export default function ModelEditor() {
       if (transform.dragging || handles.dragging || vertexEditor.dragging) return;
       setPointerFrom(e);
       const { id, hits } = pickId();
+
+      if (joinPickModeRef.current) {
+        if (id) {
+          setJoinIds((prev) =>
+            prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+          );
+          setJoinError(null);
+        }
+        return;
+      }
 
       if (vertexModeRef.current) {
         const selId = selectedRef.current;
@@ -1268,27 +1281,31 @@ export default function ModelEditor() {
     const scene = sceneRef.current;
     if (!scene) return;
     const ids = Array.from(new Set(joinIds));
-    const meshes = ids
+    const picked = ids
       .map((id) => ({ id, obj: objectsRef.current.get(id) }))
-      .filter((e): e is { id: string; obj: THREE.Mesh } => {
-        const m = e.obj as THREE.Mesh | undefined;
-        return !!m && (m as THREE.Mesh).isMesh === true && !!m.geometry;
+      .filter((e): e is { id: string; obj: THREE.Object3D } => !!e.obj);
+    const meshList: THREE.Mesh[] = [];
+    for (const { obj } of picked) {
+      obj.traverse((o) => {
+        const m = o as THREE.Mesh;
+        if (m.isMesh === true && !!m.geometry) meshList.push(m);
       });
-    if (meshes.length < 2) {
-      setJoinError("Pick at least 2 meshes in the outliner to join.");
+    }
+    if (meshList.length < 2) {
+      setJoinError("Pick at least 2 objects with geometry (lights can't be joined).");
       return;
     }
 
     const center = new THREE.Vector3();
-    for (const { obj } of meshes) {
+    for (const obj of meshList) {
       obj.updateMatrixWorld(true);
       center.add(obj.getWorldPosition(new THREE.Vector3()));
     }
-    center.multiplyScalar(1 / meshes.length);
+    center.multiplyScalar(1 / meshList.length);
 
     const positions: number[] = [];
     const toLocal = new THREE.Matrix4().makeTranslation(-center.x, -center.y, -center.z);
-    for (const { obj } of meshes) {
+    for (const obj of meshList) {
       const src = obj.geometry.index ? obj.geometry.toNonIndexed() : obj.geometry;
       const pos = src.getAttribute("position") as THREE.BufferAttribute | undefined;
       if (pos) {
@@ -1314,23 +1331,26 @@ export default function ModelEditor() {
     g.userData["custom"] = true;
     g.userData["vertexEditOwned"] = true;
 
-    const first = meshes[0]!.obj;
+    const first = meshList[0]!;
     const baseMat = first.material as THREE.Material;
     const merged = new THREE.Mesh(g, baseMat.clone());
     merged.position.copy(center);
     merged.castShadow = true;
     merged.receiveShadow = true;
-    merged.userData["kind"] = first.userData["kind"] ?? "plane";
+    merged.userData["kind"] = picked[0]?.obj.userData["kind"] ?? first.userData["kind"] ?? "plane";
     merged.userData["deformed"] = true;
 
     transformRef.current?.detach();
     handlesRef.current?.attach(null);
     vertexRef.current?.attach(null);
 
-    const idSet = new Set(meshes.map((m) => m.id));
-    for (const { id, obj } of meshes) {
+    const idSet = new Set(picked.map((m) => m.id));
+    for (const { id, obj } of picked) {
       scene.remove(obj);
-      obj.geometry.dispose();
+      obj.traverse((o) => {
+        const m = o as THREE.Mesh;
+        if (m.isMesh === true) m.geometry.dispose();
+      });
       objectsRef.current.delete(id);
     }
 
@@ -1361,6 +1381,7 @@ export default function ModelEditor() {
     setSelected(newId);
     setJoinIds([]);
     setJoinError(null);
+    setJoinPickMode(false);
     tick();
   }, [joinIds, tick]);
 
@@ -1534,6 +1555,7 @@ export default function ModelEditor() {
         cancelQuadRef.current?.();
         setQuadMode(false);
         setCutMode(false);
+        setJoinPickMode(false);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -2081,8 +2103,19 @@ export default function ModelEditor() {
                 <Combine className="size-3.5" /> Join meshes
               </p>
               <p className="text-[10px] text-muted-foreground">
-                Ctrl+click objects in the outliner to tick them, then join them into one mesh.
+                Turn on pick mode, then click objects in the 3D view or the list to tick them (Ctrl+click also works).
               </p>
+              <button
+                onClick={() => setJoinPickMode((v) => !v)}
+                className={`flex w-full items-center gap-2 rounded-md border px-2 py-1.5 text-[11px] font-semibold cursor-pointer transition-colors ${
+                  joinPickMode
+                    ? "border-amber-400/70 bg-amber-400/20 text-amber-300"
+                    : "border-border bg-secondary text-muted-foreground hover:bg-accent hover:text-foreground"
+                }`}
+              >
+                <SquareDashed className="size-3.5" />{" "}
+                {joinPickMode ? "Pick mode: ON (click objects)" : "Pick objects by clicking"}
+              </button>
               <p className="text-[10px] text-primary">{joinIds.length} object(s) picked</p>
               <button
                 onClick={joinObjects}
@@ -2458,7 +2491,7 @@ export default function ModelEditor() {
                         }
                       }}
                       onClick={(e) => {
-                        if (e.ctrlKey || e.metaKey || e.shiftKey) {
+                        if (joinPickMode || e.ctrlKey || e.metaKey || e.shiftKey) {
                           e.preventDefault();
                           toggleJoinId(i.id);
                           return;
