@@ -48,6 +48,8 @@ import {
   Combine,
   CheckSquare,
   SquareDashed,
+  Save,
+  FilePlus2,
 } from "lucide-react";
 import {
   GEOMETRY_SPECS,
@@ -171,6 +173,7 @@ export default function ModelEditor() {
   const [joinIds, setJoinIds] = useState<string[]>([]);
   const [joinError, setJoinError] = useState<string | null>(null);
   const [histVersion, setHistVersion] = useState(0);
+  const [savedAt, setSavedAt] = useState<number | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; id: string | null } | null>(null);
 
   const [draggedPayload, setDraggedPayload] = useState<{
@@ -205,7 +208,21 @@ export default function ModelEditor() {
     sceneRef.current = scene;
 
     // Populate or restore objects into the scene
-    if (objectsRef.current.size === 0) {
+    const savedProject = objectsRef.current.size === 0 ? loadProject() : null;
+    if (savedProject && savedProject.snapshot.items.length) {
+      const list = restoreSnapshot(savedProject.snapshot, scene, objectsRef.current);
+      setItems(list);
+      setSelected(
+        savedProject.snapshot.selected && objectsRef.current.has(savedProject.snapshot.selected)
+          ? savedProject.snapshot.selected
+          : null,
+      );
+      if (savedProject.bg) {
+        setBgColor(savedProject.bg);
+        scene.background = new THREE.Color(savedProject.bg);
+      }
+      setSavedAt(savedProject.savedAt);
+    } else if (objectsRef.current.size === 0) {
       const boxMesh = new THREE.Mesh(
         createGeometry("box"),
         new THREE.MeshStandardMaterial({
@@ -1029,6 +1046,25 @@ export default function ModelEditor() {
   const canRedo = historyRef.current.canRedo;
   void histVersion;
 
+  /* ---------------- local autosave ---------------- */
+  useEffect(() => {
+    if (!historyReady.current) return;
+    const t = window.setTimeout(() => {
+      const at = saveProject(
+        captureSnapshot(itemsRef.current, objectsRef.current, selectedRef.current),
+        bgColor,
+      );
+      if (at) setSavedAt(at);
+    }, 600);
+    return () => window.clearTimeout(t);
+  }, [histVersion, bgColor]);
+
+  const newScene = useCallback(() => {
+    clearProject();
+    setSavedAt(null);
+    if (typeof window !== "undefined") window.location.reload();
+  }, []);
+
   /* ---------------- cut tool ---------------- */
   const applyCut = useCallback(() => {
     const tool = cutRef.current;
@@ -1501,6 +1537,31 @@ export default function ModelEditor() {
           delete
         </span>
         <div className="ml-auto flex items-center gap-2">
+          <span className="hidden text-[11px] text-muted-foreground md:inline">
+            {savedAt
+              ? `Saved ${new Date(savedAt).toLocaleTimeString()}`
+              : "Not saved yet"}
+          </span>
+          <button
+            onClick={() => {
+              const at = saveProject(
+                captureSnapshot(itemsRef.current, objectsRef.current, selectedRef.current),
+                bgColor,
+              );
+              if (at) setSavedAt(at);
+            }}
+            title="Save project to this browser"
+            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-secondary px-2.5 py-1.5 text-xs font-medium cursor-pointer transition-colors hover:bg-accent hover:text-foreground"
+          >
+            <Save className="size-3.5" /> Save
+          </button>
+          <button
+            onClick={newScene}
+            title="Clear the saved project and start fresh"
+            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-secondary px-2.5 py-1.5 text-xs font-medium cursor-pointer transition-colors hover:bg-accent hover:text-foreground"
+          >
+            <FilePlus2 className="size-3.5" /> New scene
+          </button>
           <div className="flex items-center gap-1">
             <button
               onClick={undo}
