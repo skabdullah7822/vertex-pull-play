@@ -171,6 +171,7 @@ export default function ModelEditor() {
   const [joinIds, setJoinIds] = useState<string[]>([]);
   const [joinError, setJoinError] = useState<string | null>(null);
   const [histVersion, setHistVersion] = useState(0);
+  const [savedAt, setSavedAt] = useState<number | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; id: string | null } | null>(null);
 
   const [draggedPayload, setDraggedPayload] = useState<{
