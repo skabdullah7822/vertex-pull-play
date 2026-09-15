@@ -1331,7 +1331,7 @@ export default function ModelEditor() {
     g.userData["custom"] = true;
     g.userData["vertexEditOwned"] = true;
 
-    const first = meshes[0]!.obj;
+    const first = meshList[0]!;
     const baseMat = first.material as THREE.Material;
     const merged = new THREE.Mesh(g, baseMat.clone());
     merged.position.copy(center);
@@ -1344,10 +1344,13 @@ export default function ModelEditor() {
     handlesRef.current?.attach(null);
     vertexRef.current?.attach(null);
 
-    const idSet = new Set(meshes.map((m) => m.id));
-    for (const { id, obj } of meshes) {
+    const idSet = new Set(picked.map((m) => m.id));
+    for (const { id, obj } of picked) {
       scene.remove(obj);
-      obj.geometry.dispose();
+      obj.traverse((o) => {
+        const m = o as THREE.Mesh;
+        if (m.isMesh === true) m.geometry.dispose();
+      });
       objectsRef.current.delete(id);
     }
 
@@ -1378,6 +1381,7 @@ export default function ModelEditor() {
     setSelected(newId);
     setJoinIds([]);
     setJoinError(null);
+    setJoinPickMode(false);
     tick();
   }, [joinIds, tick]);
 
