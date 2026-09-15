@@ -1535,6 +1535,31 @@ export default function ModelEditor() {
           delete
         </span>
         <div className="ml-auto flex items-center gap-2">
+          <span className="hidden text-[11px] text-muted-foreground md:inline">
+            {savedAt
+              ? `Saved ${new Date(savedAt).toLocaleTimeString()}`
+              : "Not saved yet"}
+          </span>
+          <button
+            onClick={() => {
+              const at = saveProject(
+                captureSnapshot(itemsRef.current, objectsRef.current, selectedRef.current),
+                bgColor,
+              );
+              if (at) setSavedAt(at);
+            }}
+            title="Save project to this browser"
+            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-secondary px-2.5 py-1.5 text-xs font-medium cursor-pointer transition-colors hover:bg-accent hover:text-foreground"
+          >
+            <Save className="size-3.5" /> Save
+          </button>
+          <button
+            onClick={newScene}
+            title="Clear the saved project and start fresh"
+            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-secondary px-2.5 py-1.5 text-xs font-medium cursor-pointer transition-colors hover:bg-accent hover:text-foreground"
+          >
+            <FilePlus2 className="size-3.5" /> New scene
+          </button>
           <div className="flex items-center gap-1">
             <button
               onClick={undo}
