@@ -205,7 +205,21 @@ export default function ModelEditor() {
     sceneRef.current = scene;
 
     // Populate or restore objects into the scene
-    if (objectsRef.current.size === 0) {
+    const savedProject = objectsRef.current.size === 0 ? loadProject() : null;
+    if (savedProject && savedProject.snapshot.items.length) {
+      const list = restoreSnapshot(savedProject.snapshot, scene, objectsRef.current);
+      setItems(list);
+      setSelected(
+        savedProject.snapshot.selected && objectsRef.current.has(savedProject.snapshot.selected)
+          ? savedProject.snapshot.selected
+          : null,
+      );
+      if (savedProject.bg) {
+        setBgColor(savedProject.bg);
+        scene.background = new THREE.Color(savedProject.bg);
+      }
+      setSavedAt(savedProject.savedAt);
+    } else if (objectsRef.current.size === 0) {
       const boxMesh = new THREE.Mesh(
         createGeometry("box"),
         new THREE.MeshStandardMaterial({
