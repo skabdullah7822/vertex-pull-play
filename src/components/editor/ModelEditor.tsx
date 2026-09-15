@@ -177,6 +177,8 @@ export default function ModelEditor() {
   const [cutError, setCutError] = useState<string | null>(null);
   const [joinIds, setJoinIds] = useState<string[]>([]);
   const [joinError, setJoinError] = useState<string | null>(null);
+  const [joinPickMode, setJoinPickMode] = useState(false);
+  const joinPickModeRef = useRef(false);
   const [histVersion, setHistVersion] = useState(0);
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [walkMode, setWalkMode] = useState(false);
@@ -208,6 +210,7 @@ export default function ModelEditor() {
   vertexModeRef.current = vertexMode;
   cutModeRef.current = cutMode;
   walkModeRef.current = walkMode;
+  joinPickModeRef.current = joinPickMode;
   const itemsRef = useRef<Item[]>(items);
   itemsRef.current = items;
 
@@ -595,6 +598,16 @@ export default function ModelEditor() {
       if (transform.dragging || handles.dragging || vertexEditor.dragging) return;
       setPointerFrom(e);
       const { id, hits } = pickId();
+
+      if (joinPickModeRef.current) {
+        if (id) {
+          setJoinIds((prev) =>
+            prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+          );
+          setJoinError(null);
+        }
+        return;
+      }
 
       if (vertexModeRef.current) {
         const selId = selectedRef.current;
