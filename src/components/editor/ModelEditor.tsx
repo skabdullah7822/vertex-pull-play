@@ -50,6 +50,9 @@ import {
   SquareDashed,
   Save,
   FilePlus2,
+  Footprints,
+  Play,
+  Terminal,
 } from "lucide-react";
 import {
   GEOMETRY_SPECS,
@@ -67,6 +70,8 @@ import { VertexEditor } from "./vertexEdit";
 import { CutTool, sliceGeometry, carveGeometry, type CutStatus } from "./cutTool";
 import { HistoryStack, captureSnapshot, restoreSnapshot, type Snapshot } from "./history";
 import { saveProject, loadProject, clearProject } from "./projectStore";
+import { WalkController } from "./walkMode";
+import { runUserCode, kindOf, SAMPLE_CODE } from "./runCode";
 
 type Item = { id: string; name: string; kind: Kind };
 type Mode = "translate" | "rotate" | "scale" | "place";
@@ -174,6 +179,13 @@ export default function ModelEditor() {
   const [joinError, setJoinError] = useState<string | null>(null);
   const [histVersion, setHistVersion] = useState(0);
   const [savedAt, setSavedAt] = useState<number | null>(null);
+  const [walkMode, setWalkMode] = useState(false);
+  const [scriptOpen, setScriptOpen] = useState(false);
+  const [script, setScript] = useState(SAMPLE_CODE);
+  const [scriptError, setScriptError] = useState<string | null>(null);
+  const [scriptLog, setScriptLog] = useState<string[]>([]);
+  const walkRef = useRef<WalkController | null>(null);
+  const walkModeRef = useRef(false);
   const [menu, setMenu] = useState<{ x: number; y: number; id: string | null } | null>(null);
 
   const [draggedPayload, setDraggedPayload] = useState<{
@@ -195,6 +207,7 @@ export default function ModelEditor() {
   snapOnRef.current = snapOn;
   vertexModeRef.current = vertexMode;
   cutModeRef.current = cutMode;
+  walkModeRef.current = walkMode;
   const itemsRef = useRef<Item[]>(items);
   itemsRef.current = items;
 
@@ -291,6 +304,17 @@ export default function ModelEditor() {
     orbit.enableDamping = true;
     orbit.target.set(0, 0.5, 0);
     orbitRef.current = orbit;
+
+    const walker = new WalkController(
+      renderer.domElement,
+      () =>
+        [...objectsRef.current.values()].filter(
+          (o) => (o as THREE.Mesh).isMesh && o.userData['solid'] === true && o.visible,
+        ),
+      () => setWalkMode(false),
+    );
+    walkRef.current = walker;
+    const walkClock = new THREE.Clock();
 
     const snap = new SnapGuides();
     scene.add(snap.group);
@@ -566,7 +590,7 @@ export default function ModelEditor() {
       down = { x: e.clientX, y: e.clientY };
     };
     const onUp = (e: PointerEvent) => {
-      if (e.button !== 0) return;
+      if (e.button !== 0 || walkModeRef.current) return;
       if (Math.hypot(e.clientX - down.x, e.clientY - down.y) > 4) return;
       if (transform.dragging || handles.dragging || vertexEditor.dragging) return;
       setPointerFrom(e);
@@ -725,12 +749,19 @@ export default function ModelEditor() {
       renderer.domElement.style.height = "100%";
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
+      walker.setAspect(w / h);
     };
     const ro = new ResizeObserver(resize);
     ro.observe(mount);
     resize();
 
     renderer.setAnimationLoop(() => {
+      const dt = walkClock.getDelta();
+      if (walker.enabled) {
+        walker.update(dt);
+        renderer.render(scene, walker.camera);
+        return;
+      }
       orbit.update();
       handles.update();
       vertexEditor.update();
@@ -768,6 +799,9 @@ export default function ModelEditor() {
       vertexRef.current = null;
       transform.detach();
       transform.dispose();
+      walker.exit();
+      walker.dispose();
+      walkRef.current = null;
       orbit.dispose();
       renderer.dispose();
       if (mount.contains(renderer.domElement)) {
@@ -780,7 +814,7 @@ export default function ModelEditor() {
   useEffect(() => {
     const t = transformRef.current;
     if (!t) return;
-    if (mode === "place" || vertexMode || cutMode) {
+    if (mode === "place" || vertexMode || cutMode || walkMode) {
       t.detach();
       return;
     }
@@ -788,7 +822,23 @@ export default function ModelEditor() {
     if (obj) t.attach(obj);
     else t.detach();
     t.setMode(mode);
-  }, [selected, items, mode, vertexMode, cutMode]);
+  }, [selected, items, mode, vertexMode, cutMode, walkMode]);
+
+  /* ---------------- walk mode ---------------- */
+  useEffect(() => {
+    const w = walkRef.current;
+    const cam = cameraRef.current;
+    const orb = orbitRef.current;
+    if (!w || !cam || !orb) return;
+    if (walkMode) {
+      w.setAspect(cam.aspect);
+      w.enter(cam.position.clone(), orb.target.clone());
+      orb.enabled = false;
+    } else {
+      w.exit();
+      orb.enabled = true;
+    }
+  }, [walkMode]);
 
   useEffect(() => {
     if (mode !== "place" && dropIndicatorRef.current) {
