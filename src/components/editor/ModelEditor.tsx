@@ -1337,7 +1337,7 @@ export default function ModelEditor() {
     merged.position.copy(center);
     merged.castShadow = true;
     merged.receiveShadow = true;
-    merged.userData["kind"] = first.userData["kind"] ?? "plane";
+    merged.userData["kind"] = picked[0]?.obj.userData["kind"] ?? first.userData["kind"] ?? "plane";
     merged.userData["deformed"] = true;
 
     transformRef.current?.detach();
@@ -2102,8 +2102,19 @@ export default function ModelEditor() {
                 <Combine className="size-3.5" /> Join meshes
               </p>
               <p className="text-[10px] text-muted-foreground">
-                Ctrl+click objects in the outliner to tick them, then join them into one mesh.
+                Turn on pick mode, then click objects in the 3D view or the list to tick them (Ctrl+click also works).
               </p>
+              <button
+                onClick={() => setJoinPickMode((v) => !v)}
+                className={`flex w-full items-center gap-2 rounded-md border px-2 py-1.5 text-[11px] font-semibold cursor-pointer transition-colors ${
+                  joinPickMode
+                    ? "border-amber-400/70 bg-amber-400/20 text-amber-300"
+                    : "border-border bg-secondary text-muted-foreground hover:bg-accent hover:text-foreground"
+                }`}
+              >
+                <SquareDashed className="size-3.5" />{" "}
+                {joinPickMode ? "Pick mode: ON (click objects)" : "Pick objects by clicking"}
+              </button>
               <p className="text-[10px] text-primary">{joinIds.length} object(s) picked</p>
               <button
                 onClick={joinObjects}
@@ -2479,7 +2490,7 @@ export default function ModelEditor() {
                         }
                       }}
                       onClick={(e) => {
-                        if (e.ctrlKey || e.metaKey || e.shiftKey) {
+                        if (joinPickMode || e.ctrlKey || e.metaKey || e.shiftKey) {
                           e.preventDefault();
                           toggleJoinId(i.id);
                           return;
