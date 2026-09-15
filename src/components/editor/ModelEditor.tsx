@@ -1281,27 +1281,31 @@ export default function ModelEditor() {
     const scene = sceneRef.current;
     if (!scene) return;
     const ids = Array.from(new Set(joinIds));
-    const meshes = ids
+    const picked = ids
       .map((id) => ({ id, obj: objectsRef.current.get(id) }))
-      .filter((e): e is { id: string; obj: THREE.Mesh } => {
-        const m = e.obj as THREE.Mesh | undefined;
-        return !!m && (m as THREE.Mesh).isMesh === true && !!m.geometry;
+      .filter((e): e is { id: string; obj: THREE.Object3D } => !!e.obj);
+    const meshList: THREE.Mesh[] = [];
+    for (const { obj } of picked) {
+      obj.traverse((o) => {
+        const m = o as THREE.Mesh;
+        if (m.isMesh === true && !!m.geometry) meshList.push(m);
       });
-    if (meshes.length < 2) {
-      setJoinError("Pick at least 2 meshes in the outliner to join.");
+    }
+    if (meshList.length < 2) {
+      setJoinError("Pick at least 2 objects with geometry (lights can't be joined).");
       return;
     }
 
     const center = new THREE.Vector3();
-    for (const { obj } of meshes) {
+    for (const obj of meshList) {
       obj.updateMatrixWorld(true);
       center.add(obj.getWorldPosition(new THREE.Vector3()));
     }
-    center.multiplyScalar(1 / meshes.length);
+    center.multiplyScalar(1 / meshList.length);
 
     const positions: number[] = [];
     const toLocal = new THREE.Matrix4().makeTranslation(-center.x, -center.y, -center.z);
-    for (const { obj } of meshes) {
+    for (const obj of meshList) {
       const src = obj.geometry.index ? obj.geometry.toNonIndexed() : obj.geometry;
       const pos = src.getAttribute("position") as THREE.BufferAttribute | undefined;
       if (pos) {
