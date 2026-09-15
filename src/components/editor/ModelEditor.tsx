@@ -314,7 +314,7 @@ export default function ModelEditor() {
       () => setWalkMode(false),
     );
     walkRef.current = walker;
-    const walkClock = new THREE.Clock();
+    let lastFrameTime = performance.now();
 
     const snap = new SnapGuides();
     scene.add(snap.group);
