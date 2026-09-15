@@ -48,6 +48,8 @@ import {
   Combine,
   CheckSquare,
   SquareDashed,
+  Save,
+  FilePlus2,
 } from "lucide-react";
 import {
   GEOMETRY_SPECS,
