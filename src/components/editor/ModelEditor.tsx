@@ -1556,6 +1556,42 @@ export default function ModelEditor() {
     tick();
   };
 
+  /* ---------------- code -> model ---------------- */
+  const runScript = useCallback(() => {
+    const scene = sceneRef.current;
+    if (!scene) return;
+    const res = runUserCode(script);
+    setScriptLog(res.logs);
+    if (res.error) {
+      setScriptError(res.error);
+      return;
+    }
+    if (!res.objects.length) {
+      setScriptError("Nothing was added. Use scene.add(mesh) in your code.");
+      return;
+    }
+    setScriptError(null);
+    const created: Item[] = [];
+    for (const obj of res.objects) {
+      const kind = kindOf(obj);
+      obj.userData['kind'] = kind;
+      obj.userData['deformed'] = true;
+      const mesh = obj as THREE.Mesh;
+      if (mesh.isMesh) {
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        if (obj.userData['solid'] === undefined) obj.userData['solid'] = true;
+      }
+      const id = nextId();
+      objectsRef.current.set(id, obj);
+      scene.add(obj);
+      created.push({ id, name: obj.name || `${labelFor(kind)} (code)`, kind });
+    }
+    setItems((prev) => [...prev, ...created]);
+    setSelected(created[0]!.id);
+    tick();
+  }, [script, tick]);
+
   /* ---------------- code export ---------------- */
   const code = useMemo(() => {
     const list = items
@@ -2294,6 +2330,48 @@ export default function ModelEditor() {
               <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-muted-foreground selection:bg-primary/30">
                 {code}
               </pre>
+            </div>
+          )}
+          {scriptOpen && (
+            <div className="absolute inset-y-0 right-0 z-10 flex w-[min(560px,60%)] flex-col border-l border-border bg-card/95 p-4 backdrop-blur shadow-2xl">
+              <div className="flex items-center justify-between pb-3 mb-3 border-b border-border">
+                <span className="text-xs font-semibold flex items-center gap-1.5">
+                  <Terminal className="size-4 text-primary" /> Code → Model
+                </span>
+                <button
+                  onClick={runScript}
+                  className="inline-flex items-center gap-1 rounded bg-primary px-2 py-1 text-[11px] font-medium text-primary-foreground cursor-pointer hover:bg-primary/90"
+                >
+                  <Play className="size-3" /> Run code
+                </button>
+              </div>
+              <p className="pb-2 text-[10px] text-muted-foreground">
+                Write plain Three.js. <code>THREE</code> and <code>scene</code> are ready — every
+                object you add to <code>scene</code> shows up in the list on the right.
+              </p>
+              <textarea
+                value={script}
+                onChange={(e) => setScript(e.target.value)}
+                spellCheck={false}
+                className="min-h-0 flex-1 w-full resize-none rounded-md border border-border bg-background p-3 font-mono text-[11px] leading-relaxed text-foreground outline-none focus:border-primary"
+              />
+              {scriptError && (
+                <p className="pt-2 text-[11px] text-destructive break-words">{scriptError}</p>
+              )}
+              {scriptLog.length > 0 && (
+                <pre className="mt-2 max-h-24 overflow-auto rounded bg-secondary/50 p-2 font-mono text-[10px] text-muted-foreground">
+                  {scriptLog.join("\n")}
+                </pre>
+              )}
+            </div>
+          )}
+          {walkMode && (
+            <div className="pointer-events-none absolute inset-0 z-10">
+              <div className="absolute left-1/2 top-1/2 size-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/80" />
+              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-md bg-black/60 px-3 py-1.5 text-[11px] text-white">
+                WASD walk · Shift run · Space jump · mouse look · Esc to leave — only objects marked
+                solid block you
+              </div>
             </div>
           )}
         </main>
