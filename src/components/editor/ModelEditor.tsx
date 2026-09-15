@@ -1495,6 +1495,10 @@ export default function ModelEditor() {
       const target = e.target as HTMLElement;
       if (target && /input|textarea|select/i.test(target.tagName)) return;
       const k = e.key.toLowerCase();
+      if (walkModeRef.current) {
+        if (k === "escape" || k === "f") setWalkMode(false);
+        return;
+      }
       if (e.ctrlKey || e.metaKey) {
         if (k === "z" && e.shiftKey) {
           e.preventDefault();
@@ -1511,7 +1515,8 @@ export default function ModelEditor() {
         }
         return;
       }
-      if (k === "c") setCutMode((v) => !v);
+      if (k === "f") setWalkMode(true);
+      else if (k === "c") setCutMode((v) => !v);
       else if (k === "g") setMode("translate");
       else if (k === "r") setMode("rotate");
       else if (k === "s") setMode("scale");
@@ -1642,7 +1647,33 @@ export default function ModelEditor() {
             <PanelRight className="size-3.5 text-primary" /> {sidebarOpen ? "Hide Panel" : "Show Panel"}
           </button>
           <button
-            onClick={() => setCodeOpen((v) => !v)}
+            onClick={() => setWalkMode((v) => !v)}
+            className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium cursor-pointer transition-colors ${
+              walkMode
+                ? "border-primary bg-primary text-primary-foreground"
+                : "border-border bg-secondary hover:bg-accent hover:text-foreground"
+            }`}
+          >
+            <Footprints className="size-3.5" /> {walkMode ? "Walking (Esc)" : "Walk (F)"}
+          </button>
+          <button
+            onClick={() => {
+              setScriptOpen((v) => !v);
+              setCodeOpen(false);
+            }}
+            className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium cursor-pointer transition-colors ${
+              scriptOpen
+                ? "border-primary bg-primary text-primary-foreground"
+                : "border-border bg-secondary hover:bg-accent hover:text-foreground"
+            }`}
+          >
+            <Terminal className="size-3.5" /> Code → Model
+          </button>
+          <button
+            onClick={() => {
+              setCodeOpen((v) => !v);
+              setScriptOpen(false);
+            }}
             className="inline-flex items-center gap-1.5 rounded-md border border-border bg-secondary px-2.5 py-1.5 text-xs font-medium cursor-pointer transition-colors hover:bg-accent hover:text-foreground"
           >
             <Code2 className="size-3.5" /> {codeOpen ? "Hide Code" : "View Three.js Code"}
