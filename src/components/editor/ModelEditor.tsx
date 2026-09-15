@@ -50,6 +50,9 @@ import {
   SquareDashed,
   Save,
   FilePlus2,
+  Footprints,
+  Play,
+  Terminal,
 } from "lucide-react";
 import {
   GEOMETRY_SPECS,
@@ -67,6 +70,8 @@ import { VertexEditor } from "./vertexEdit";
 import { CutTool, sliceGeometry, carveGeometry, type CutStatus } from "./cutTool";
 import { HistoryStack, captureSnapshot, restoreSnapshot, type Snapshot } from "./history";
 import { saveProject, loadProject, clearProject } from "./projectStore";
+import { WalkController } from "./walkMode";
+import { runUserCode, kindOf, SAMPLE_CODE } from "./runCode";
 
 type Item = { id: string; name: string; kind: Kind };
 type Mode = "translate" | "rotate" | "scale" | "place";
@@ -174,6 +179,13 @@ export default function ModelEditor() {
   const [joinError, setJoinError] = useState<string | null>(null);
   const [histVersion, setHistVersion] = useState(0);
   const [savedAt, setSavedAt] = useState<number | null>(null);
+  const [walkMode, setWalkMode] = useState(false);
+  const [scriptOpen, setScriptOpen] = useState(false);
+  const [script, setScript] = useState(SAMPLE_CODE);
+  const [scriptError, setScriptError] = useState<string | null>(null);
+  const [scriptLog, setScriptLog] = useState<string[]>([]);
+  const walkRef = useRef<WalkController | null>(null);
+  const walkModeRef = useRef(false);
   const [menu, setMenu] = useState<{ x: number; y: number; id: string | null } | null>(null);
 
   const [draggedPayload, setDraggedPayload] = useState<{
@@ -195,6 +207,7 @@ export default function ModelEditor() {
   snapOnRef.current = snapOn;
   vertexModeRef.current = vertexMode;
   cutModeRef.current = cutMode;
+  walkModeRef.current = walkMode;
   const itemsRef = useRef<Item[]>(items);
   itemsRef.current = items;
 
@@ -291,6 +304,17 @@ export default function ModelEditor() {
     orbit.enableDamping = true;
     orbit.target.set(0, 0.5, 0);
     orbitRef.current = orbit;
+
+    const walker = new WalkController(
+      renderer.domElement,
+      () =>
+        [...objectsRef.current.values()].filter(
+          (o) => (o as THREE.Mesh).isMesh && o.userData['solid'] === true && o.visible,
+        ),
+      () => setWalkMode(false),
+    );
+    walkRef.current = walker;
+    const walkClock = new THREE.Clock();
 
     const snap = new SnapGuides();
     scene.add(snap.group);
@@ -566,7 +590,7 @@ export default function ModelEditor() {
       down = { x: e.clientX, y: e.clientY };
     };
     const onUp = (e: PointerEvent) => {
-      if (e.button !== 0) return;
+      if (e.button !== 0 || walkModeRef.current) return;
       if (Math.hypot(e.clientX - down.x, e.clientY - down.y) > 4) return;
       if (transform.dragging || handles.dragging || vertexEditor.dragging) return;
       setPointerFrom(e);
@@ -725,12 +749,19 @@ export default function ModelEditor() {
       renderer.domElement.style.height = "100%";
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
+      walker.setAspect(w / h);
     };
     const ro = new ResizeObserver(resize);
     ro.observe(mount);
     resize();
 
     renderer.setAnimationLoop(() => {
+      const dt = walkClock.getDelta();
+      if (walker.enabled) {
+        walker.update(dt);
+        renderer.render(scene, walker.camera);
+        return;
+      }
       orbit.update();
       handles.update();
       vertexEditor.update();
@@ -768,6 +799,9 @@ export default function ModelEditor() {
       vertexRef.current = null;
       transform.detach();
       transform.dispose();
+      walker.exit();
+      walker.dispose();
+      walkRef.current = null;
       orbit.dispose();
       renderer.dispose();
       if (mount.contains(renderer.domElement)) {
@@ -780,7 +814,7 @@ export default function ModelEditor() {
   useEffect(() => {
     const t = transformRef.current;
     if (!t) return;
-    if (mode === "place" || vertexMode || cutMode) {
+    if (mode === "place" || vertexMode || cutMode || walkMode) {
       t.detach();
       return;
     }
@@ -788,7 +822,23 @@ export default function ModelEditor() {
     if (obj) t.attach(obj);
     else t.detach();
     t.setMode(mode);
-  }, [selected, items, mode, vertexMode, cutMode]);
+  }, [selected, items, mode, vertexMode, cutMode, walkMode]);
+
+  /* ---------------- walk mode ---------------- */
+  useEffect(() => {
+    const w = walkRef.current;
+    const cam = cameraRef.current;
+    const orb = orbitRef.current;
+    if (!w || !cam || !orb) return;
+    if (walkMode) {
+      w.setAspect(cam.aspect);
+      w.enter(cam.position.clone(), orb.target.clone());
+      orb.enabled = false;
+    } else {
+      w.exit();
+      orb.enabled = true;
+    }
+  }, [walkMode]);
 
   useEffect(() => {
     if (mode !== "place" && dropIndicatorRef.current) {
@@ -1445,6 +1495,10 @@ export default function ModelEditor() {
       const target = e.target as HTMLElement;
       if (target && /input|textarea|select/i.test(target.tagName)) return;
       const k = e.key.toLowerCase();
+      if (walkModeRef.current) {
+        if (k === "escape" || k === "f") setWalkMode(false);
+        return;
+      }
       if (e.ctrlKey || e.metaKey) {
         if (k === "z" && e.shiftKey) {
           e.preventDefault();
@@ -1461,7 +1515,8 @@ export default function ModelEditor() {
         }
         return;
       }
-      if (k === "c") setCutMode((v) => !v);
+      if (k === "f") setWalkMode(true);
+      else if (k === "c") setCutMode((v) => !v);
       else if (k === "g") setMode("translate");
       else if (k === "r") setMode("rotate");
       else if (k === "s") setMode("scale");
@@ -1500,6 +1555,42 @@ export default function ModelEditor() {
     orb.update();
     tick();
   };
+
+  /* ---------------- code -> model ---------------- */
+  const runScript = useCallback(() => {
+    const scene = sceneRef.current;
+    if (!scene) return;
+    const res = runUserCode(script);
+    setScriptLog(res.logs);
+    if (res.error) {
+      setScriptError(res.error);
+      return;
+    }
+    if (!res.objects.length) {
+      setScriptError("Nothing was added. Use scene.add(mesh) in your code.");
+      return;
+    }
+    setScriptError(null);
+    const created: Item[] = [];
+    for (const obj of res.objects) {
+      const kind = kindOf(obj);
+      obj.userData['kind'] = kind;
+      obj.userData['deformed'] = true;
+      const mesh = obj as THREE.Mesh;
+      if (mesh.isMesh) {
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        if (obj.userData['solid'] === undefined) obj.userData['solid'] = true;
+      }
+      const id = nextId();
+      objectsRef.current.set(id, obj);
+      scene.add(obj);
+      created.push({ id, name: obj.name || `${labelFor(kind)} (code)`, kind });
+    }
+    setItems((prev) => [...prev, ...created]);
+    setSelected(created[0]!.id);
+    tick();
+  }, [script, tick]);
 
   /* ---------------- code export ---------------- */
   const code = useMemo(() => {
@@ -1592,7 +1683,33 @@ export default function ModelEditor() {
             <PanelRight className="size-3.5 text-primary" /> {sidebarOpen ? "Hide Panel" : "Show Panel"}
           </button>
           <button
-            onClick={() => setCodeOpen((v) => !v)}
+            onClick={() => setWalkMode((v) => !v)}
+            className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium cursor-pointer transition-colors ${
+              walkMode
+                ? "border-primary bg-primary text-primary-foreground"
+                : "border-border bg-secondary hover:bg-accent hover:text-foreground"
+            }`}
+          >
+            <Footprints className="size-3.5" /> {walkMode ? "Walking (Esc)" : "Walk (F)"}
+          </button>
+          <button
+            onClick={() => {
+              setScriptOpen((v) => !v);
+              setCodeOpen(false);
+            }}
+            className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium cursor-pointer transition-colors ${
+              scriptOpen
+                ? "border-primary bg-primary text-primary-foreground"
+                : "border-border bg-secondary hover:bg-accent hover:text-foreground"
+            }`}
+          >
+            <Terminal className="size-3.5" /> Code → Model
+          </button>
+          <button
+            onClick={() => {
+              setCodeOpen((v) => !v);
+              setScriptOpen(false);
+            }}
             className="inline-flex items-center gap-1.5 rounded-md border border-border bg-secondary px-2.5 py-1.5 text-xs font-medium cursor-pointer transition-colors hover:bg-accent hover:text-foreground"
           >
             <Code2 className="size-3.5" /> {codeOpen ? "Hide Code" : "View Three.js Code"}
@@ -2213,6 +2330,48 @@ export default function ModelEditor() {
               <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-muted-foreground selection:bg-primary/30">
                 {code}
               </pre>
+            </div>
+          )}
+          {scriptOpen && (
+            <div className="absolute inset-y-0 right-0 z-10 flex w-[min(560px,60%)] flex-col border-l border-border bg-card/95 p-4 backdrop-blur shadow-2xl">
+              <div className="flex items-center justify-between pb-3 mb-3 border-b border-border">
+                <span className="text-xs font-semibold flex items-center gap-1.5">
+                  <Terminal className="size-4 text-primary" /> Code → Model
+                </span>
+                <button
+                  onClick={runScript}
+                  className="inline-flex items-center gap-1 rounded bg-primary px-2 py-1 text-[11px] font-medium text-primary-foreground cursor-pointer hover:bg-primary/90"
+                >
+                  <Play className="size-3" /> Run code
+                </button>
+              </div>
+              <p className="pb-2 text-[10px] text-muted-foreground">
+                Write plain Three.js. <code>THREE</code> and <code>scene</code> are ready — every
+                object you add to <code>scene</code> shows up in the list on the right.
+              </p>
+              <textarea
+                value={script}
+                onChange={(e) => setScript(e.target.value)}
+                spellCheck={false}
+                className="min-h-0 flex-1 w-full resize-none rounded-md border border-border bg-background p-3 font-mono text-[11px] leading-relaxed text-foreground outline-none focus:border-primary"
+              />
+              {scriptError && (
+                <p className="pt-2 text-[11px] text-destructive break-words">{scriptError}</p>
+              )}
+              {scriptLog.length > 0 && (
+                <pre className="mt-2 max-h-24 overflow-auto rounded bg-secondary/50 p-2 font-mono text-[10px] text-muted-foreground">
+                  {scriptLog.join("\n")}
+                </pre>
+              )}
+            </div>
+          )}
+          {walkMode && (
+            <div className="pointer-events-none absolute inset-0 z-10">
+              <div className="absolute left-1/2 top-1/2 size-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/80" />
+              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-md bg-black/60 px-3 py-1.5 text-[11px] text-white">
+                WASD walk · Shift run · Space jump · mouse look · Esc to leave — only objects marked
+                solid block you
+              </div>
             </div>
           )}
         </main>
