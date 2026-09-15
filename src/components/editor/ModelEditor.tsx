@@ -314,7 +314,7 @@ export default function ModelEditor() {
       () => setWalkMode(false),
     );
     walkRef.current = walker;
-    const walkClock = new THREE.Clock();
+    let lastFrameTime = performance.now();
 
     const snap = new SnapGuides();
     scene.add(snap.group);
@@ -756,7 +756,9 @@ export default function ModelEditor() {
     resize();
 
     renderer.setAnimationLoop(() => {
-      const dt = walkClock.getDelta();
+      const nowMs = performance.now();
+      const dt = Math.min((nowMs - lastFrameTime) / 1000, 0.1);
+      lastFrameTime = nowMs;
       if (walker.enabled) {
         walker.update(dt);
         renderer.render(scene, walker.camera);
