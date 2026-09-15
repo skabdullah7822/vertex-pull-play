@@ -488,11 +488,44 @@ export function sliceGeometry(
   return { a: new Float32Array(sideA), b: new Float32Array(sideB) };
 }
 
+/** Splits a polygon by a plane into the part in front (d >= 0) and behind (d <= 0). */
+function splitPolygon(poly: THREE.Vector3[], plane: THREE.Plane) {
+  const EPS = 1e-7;
+  const front: THREE.Vector3[] = [];
+  const back: THREE.Vector3[] = [];
+  for (let i = 0; i < poly.length; i++) {
+    const cur = poly[i]!;
+    const nxt = poly[(i + 1) % poly.length]!;
+    const dc = plane.distanceToPoint(cur);
+    const dn = plane.distanceToPoint(nxt);
+    if (dc >= -EPS) front.push(cur.clone());
+    if (dc <= EPS) back.push(cur.clone());
+    if ((dc > EPS && dn < -EPS) || (dc < -EPS && dn > EPS)) {
+      const t = dc / (dc - dn);
+      const p = cur.clone().lerp(nxt, t);
+      front.push(p.clone());
+      back.push(p.clone());
+    }
+  }
+  return { front, back };
+}
+
+function polyArea(poly: THREE.Vector3[]) {
+  let a = 0;
+  for (let k = 1; k + 1 < poly.length; k++) {
+    a += new THREE.Triangle(poly[0]!, poly[k]!, poly[k + 1]!).getArea();
+  }
+  return a;
+}
+
 /**
- * Removes the region of a mesh that falls inside a polygon prism.
- * `polyLocal` is the point cage in the mesh's local space, `normalLocal` the
- * cage's plane normal; the polygon is extruded infinitely along that normal so
- * the inner area is carved right through the object.
+ * Cuts a clean hole (door / window) through a mesh.
+ *
+ * `polyLocal` is the point cage in the mesh's local space and `normalLocal`
+ * its plane normal. The polygon is treated as an infinite prism along that
+ * normal: every surface inside the prism is removed with exact edges, and the
+ * inner sides of the opening are rebuilt so the hole looks solid from every
+ * angle (like a real window reveal in a wall).
  */
 export function carveGeometry(
   geo: THREE.BufferGeometry,
@@ -502,74 +535,121 @@ export function carveGeometry(
   if (polyLocal.length < 3) return null;
   const src = geo.index ? geo.toNonIndexed() : geo;
   const pos = src.getAttribute("position") as THREE.BufferAttribute | undefined;
-  if (!pos) return null;
-
-  const n = normalLocal.clone().normalize();
-  const u = new THREE.Vector3(1, 0, 0);
-  if (Math.abs(n.dot(u)) > 0.9) u.set(0, 1, 0);
-  u.crossVectors(n, u).normalize();
-  const v = new THREE.Vector3().crossVectors(n, u).normalize();
-  const origin = polyLocal[0]!.clone();
-
-  const to2 = (p: THREE.Vector3) => {
-    const d = p.clone().sub(origin);
-    return { x: d.dot(u), y: d.dot(v) };
-  };
-  const poly2 = polyLocal.map(to2);
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const p of poly2) {
-    minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
-    minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+  if (!pos) {
+    if (src !== geo) src.dispose();
+    return null;
   }
 
-  const inside = (p: { x: number; y: number }) => {
-    let hit = false;
-    for (let i = 0, j = poly2.length - 1; i < poly2.length; j = i++) {
-      const a = poly2[i]!;
-      const b = poly2[j]!;
-      if ((a.y > p.y) !== (b.y > p.y) && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) {
-        hit = !hit;
-      }
-    }
-    return hit;
-  };
+  const n = normalLocal.clone().normalize();
+  // project the cage exactly onto its own plane so the prism is well defined
+  const centroid = new THREE.Vector3();
+  polyLocal.forEach((p) => centroid.add(p));
+  centroid.multiplyScalar(1 / polyLocal.length);
+  const cagePlane = new THREE.Plane().setFromNormalAndCoplanarPoint(n, centroid);
+  const cage = polyLocal.map((p) => cagePlane.projectPoint(p, new THREE.Vector3()));
+
+  // side planes of the prism; "front" (d > 0) means outside the prism
+  const planes: THREE.Plane[] = [];
+  for (let i = 0; i < cage.length; i++) {
+    const a = cage[i]!;
+    const b = cage[(i + 1) % cage.length]!;
+    const dir = b.clone().sub(a);
+    if (dir.lengthSq() < 1e-12) continue;
+    const pn = dir.clone().cross(n).normalize();
+    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(pn, a);
+    if (plane.distanceToPoint(centroid) > 0) plane.negate();
+    planes.push(plane);
+  }
+  if (planes.length < 3) {
+    if (src !== geo) src.dispose();
+    return null;
+  }
 
   const out: number[] = [];
-  const MAX_DEPTH = 5;
-  const push = (a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3) => {
-    out.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
+  const pushPoly = (poly: THREE.Vector3[]) => {
+    for (let k = 1; k + 1 < poly.length; k++) {
+      const p0 = poly[0]!;
+      const p1 = poly[k]!;
+      const p2 = poly[k + 1]!;
+      out.push(p0.x, p0.y, p0.z, p1.x, p1.y, p1.z, p2.x, p2.y, p2.z);
+    }
   };
 
-  const rec = (a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3, depth: number) => {
-    const pa = to2(a), pb = to2(b), pc = to2(c);
-    const ia = inside(pa), ib = inside(pb), ic = inside(pc);
-    const count = (ia ? 1 : 0) + (ib ? 1 : 0) + (ic ? 1 : 0);
-    const triMinX = Math.min(pa.x, pb.x, pc.x), triMaxX = Math.max(pa.x, pb.x, pc.x);
-    const triMinY = Math.min(pa.y, pb.y, pc.y), triMaxY = Math.max(pa.y, pb.y, pc.y);
-    const overlaps = triMaxX >= minX && triMinX <= maxX && triMaxY >= minY && triMinY <= maxY;
-    if (count === 3) return; // fully inside -> removed
-    if (!overlaps) {
-      push(a, b, c);
+  let removedArea = 0;
+  const walk = (poly: THREE.Vector3[], i: number) => {
+    if (poly.length < 3) return;
+    if (i === planes.length) {
+      removedArea += polyArea(poly); // inside every side plane -> inside the prism
       return;
     }
-    if (depth >= MAX_DEPTH) {
-      if (count === 0) push(a, b, c);
-      return;
-    }
-    const ab = a.clone().lerp(b, 0.5);
-    const bc = b.clone().lerp(c, 0.5);
-    const ca = c.clone().lerp(a, 0.5);
-    rec(a, ab, ca, depth + 1);
-    rec(ab, b, bc, depth + 1);
-    rec(ca, bc, c, depth + 1);
-    rec(ab, bc, ca, depth + 1);
+    const { front, back } = splitPolygon(poly, planes[i]!);
+    if (front.length >= 3) pushPoly(front);
+    if (back.length >= 3) walk(back, i + 1);
   };
 
   const vv = (i: number) => new THREE.Vector3(pos.getX(i), pos.getY(i), pos.getZ(i));
-  for (let i = 0; i < pos.count; i += 3) rec(vv(i), vv(i + 1), vv(i + 2), 0);
+  const tris: [THREE.Vector3, THREE.Vector3, THREE.Vector3][] = [];
+  for (let i = 0; i + 2 < pos.count; i += 3) {
+    const t: [THREE.Vector3, THREE.Vector3, THREE.Vector3] = [vv(i), vv(i + 1), vv(i + 2)];
+    tris.push(t);
+    walk([t[0].clone(), t[1].clone(), t[2].clone()], 0);
+  }
+
+  if (removedArea < 1e-8) {
+    if (src !== geo) src.dispose();
+    return null;
+  }
+
+  /* ---- rebuild the inner sides of the opening (the reveal) ---- */
+  src.computeBoundingSphere();
+  const radius = src.boundingSphere?.radius ?? 10;
+  const BIG = radius * 4 + 10;
+
+  const hitsAlongNormal = (p: THREE.Vector3): number[] => {
+    const origin = p.clone().addScaledVector(n, BIG);
+    const ray = new THREE.Ray(origin, n.clone().negate());
+    const target = new THREE.Vector3();
+    const list: number[] = [];
+    for (const t of tris) {
+      if (ray.intersectTriangle(t[0], t[1], t[2], false, target)) {
+        list.push(target.clone().sub(p).dot(n));
+      }
+    }
+    list.sort((a, b) => a - b);
+    const dedup: number[] = [];
+    for (const v of list) {
+      if (!dedup.length || Math.abs(v - dedup[dedup.length - 1]!) > 1e-4) dedup.push(v);
+    }
+    return dedup;
+  };
+
+  if (tris.length <= 40000) {
+    const cache = cage.map((p) => hitsAlongNormal(p));
+    const quad = (a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3, d: THREE.Vector3) => {
+      // pushed with both windings so the reveal is visible from either side
+      out.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
+      out.push(a.x, a.y, a.z, c.x, c.y, c.z, d.x, d.y, d.z);
+      out.push(a.x, a.y, a.z, c.x, c.y, c.z, b.x, b.y, b.z);
+      out.push(a.x, a.y, a.z, d.x, d.y, d.z, c.x, c.y, c.z);
+    };
+    for (let i = 0; i < cage.length; i++) {
+      const a = cage[i]!;
+      const b = cage[(i + 1) % cage.length]!;
+      const ha = cache[i]!;
+      const hb = cache[(i + 1) % cage.length]!;
+      const pairs = Math.floor(Math.min(ha.length, hb.length) / 2);
+      for (let k = 0; k < pairs; k++) {
+        const a0 = a.clone().addScaledVector(n, ha[k * 2]!);
+        const a1 = a.clone().addScaledVector(n, ha[k * 2 + 1]!);
+        const b0 = b.clone().addScaledVector(n, hb[k * 2]!);
+        const b1 = b.clone().addScaledVector(n, hb[k * 2 + 1]!);
+        if (a0.distanceTo(a1) < 1e-5 && b0.distanceTo(b1) < 1e-5) continue;
+        quad(a0, b0, b1, a1);
+      }
+    }
+  }
 
   if (src !== geo) src.dispose();
   if (!out.length) return null;
-  if (out.length === pos.count * 3) return null; // nothing was removed
   return new Float32Array(out);
 }
