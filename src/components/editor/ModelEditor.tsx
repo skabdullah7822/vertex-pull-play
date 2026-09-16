@@ -53,6 +53,7 @@ import {
   Footprints,
   Play,
   Terminal,
+  Upload,
 } from "lucide-react";
 import {
   GEOMETRY_SPECS,
@@ -72,6 +73,7 @@ import { HistoryStack, captureSnapshot, restoreSnapshot, type Snapshot } from ".
 import { saveProject, loadProject, clearProject } from "./projectStore";
 import { WalkController } from "./walkMode";
 import { runUserCode, kindOf, SAMPLE_CODE } from "./runCode";
+import { importFile, IMPORT_ACCEPT } from "./importModel";
 
 type Item = { id: string; name: string; kind: Kind };
 type Mode = "translate" | "rotate" | "scale" | "place";
@@ -185,6 +187,8 @@ export default function ModelEditor() {
   const [scriptOpen, setScriptOpen] = useState(false);
   const [script, setScript] = useState(SAMPLE_CODE);
   const [scriptError, setScriptError] = useState<string | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
   const [scriptLog, setScriptLog] = useState<string[]>([]);
   const walkRef = useRef<WalkController | null>(null);
   const walkModeRef = useRef(false);
@@ -1580,6 +1584,46 @@ export default function ModelEditor() {
     tick();
   };
 
+  /* ---------------- import 3d files ---------------- */
+  const handleImportFiles = useCallback(
+    async (files: FileList | null) => {
+      const scene = sceneRef.current;
+      if (!scene || !files || !files.length) return;
+      const created: Item[] = [];
+      let firstError: string | null = null;
+      for (const file of Array.from(files)) {
+        const res = await importFile(file);
+        if (res.error) {
+          firstError = res.error;
+          continue;
+        }
+        if (res.code !== undefined) {
+          setScript(res.code);
+          setScriptOpen(true);
+          setCodeOpen(false);
+          continue;
+        }
+        for (const obj of res.objects) {
+          const kind = kindOf(obj);
+          obj.userData["kind"] = kind;
+          obj.userData["deformed"] = true;
+          if (obj.userData["solid"] === undefined) obj.userData["solid"] = true;
+          const id = nextId();
+          objectsRef.current.set(id, obj);
+          scene.add(obj);
+          created.push({ id, name: obj.name || file.name, kind });
+        }
+      }
+      setImportError(firstError);
+      if (created.length) {
+        setItems((prev) => [...prev, ...created]);
+        setSelected(created[0]!.id);
+      }
+      tick();
+    },
+    [tick],
+  );
+
   /* ---------------- code -> model ---------------- */
   const runScript = useCallback(() => {
     const scene = sceneRef.current;
@@ -1729,6 +1773,32 @@ export default function ModelEditor() {
           >
             <Terminal className="size-3.5" /> Code → Model
           </button>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept={IMPORT_ACCEPT}
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              void handleImportFiles(e.target.files);
+              e.target.value = "";
+            }}
+          />
+          <button
+            onClick={() => importInputRef.current?.click()}
+            title="Import GLB, GLTF, OBJ, FBX, STL, PLY, DAE, JSON or a three.js file"
+            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-secondary px-2.5 py-1.5 text-xs font-medium cursor-pointer transition-colors hover:bg-accent hover:text-foreground"
+          >
+            <Upload className="size-3.5" /> Import file
+          </button>
+          {importError && (
+            <span
+              className="max-w-[240px] truncate text-[11px] text-destructive"
+              title={importError}
+            >
+              {importError}
+            </span>
+          )}
           <button
             onClick={() => {
               setCodeOpen((v) => !v);

@@ -106,7 +106,7 @@ export async function importFile(file: File): Promise<ImportResult> {
     if (ext === "dae") {
       const { ColladaLoader } = await import("three/examples/jsm/loaders/ColladaLoader.js");
       const res = new ColladaLoader().parse(await file.text(), "");
-      const root = res.scene as unknown as THREE.Object3D;
+      const root = (res?.scene ?? new THREE.Group()) as unknown as THREE.Object3D;
       root.name = root.name || file.name;
       return { objects: [frameObject(root)] };
     }
