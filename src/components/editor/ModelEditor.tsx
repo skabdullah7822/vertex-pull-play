@@ -1773,6 +1773,24 @@ export default function ModelEditor() {
           >
             <Terminal className="size-3.5" /> Code → Model
           </button>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept={IMPORT_ACCEPT}
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              void handleImportFiles(e.target.files);
+              e.target.value = "";
+            }}
+          />
+          <button
+            onClick={() => importInputRef.current?.click()}
+            title="Import GLB, GLTF, OBJ, FBX, STL, PLY, DAE, JSON or a three.js file"
+            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-secondary px-2.5 py-1.5 text-xs font-medium cursor-pointer transition-colors hover:bg-accent hover:text-foreground"
+          >
+            <Upload className="size-3.5" /> Import file
+          </button>
           <button
             onClick={() => {
               setCodeOpen((v) => !v);
