@@ -1791,6 +1791,14 @@ export default function ModelEditor() {
           >
             <Upload className="size-3.5" /> Import file
           </button>
+          {importError && (
+            <span
+              className="max-w-[240px] truncate text-[11px] text-destructive"
+              title={importError}
+            >
+              {importError}
+            </span>
+          )}
           <button
             onClick={() => {
               setCodeOpen((v) => !v);
