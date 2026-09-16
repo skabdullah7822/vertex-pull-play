@@ -73,6 +73,7 @@ import { HistoryStack, captureSnapshot, restoreSnapshot, type Snapshot } from ".
 import { saveProject, loadProject, clearProject } from "./projectStore";
 import { WalkController } from "./walkMode";
 import { runUserCode, kindOf, SAMPLE_CODE } from "./runCode";
+import { importFile, IMPORT_ACCEPT } from "./importModel";
 
 type Item = { id: string; name: string; kind: Kind };
 type Mode = "translate" | "rotate" | "scale" | "place";
