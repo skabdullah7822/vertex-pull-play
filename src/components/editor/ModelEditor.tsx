@@ -1582,6 +1582,46 @@ export default function ModelEditor() {
     tick();
   };
 
+  /* ---------------- import 3d files ---------------- */
+  const handleImportFiles = useCallback(
+    async (files: FileList | null) => {
+      const scene = sceneRef.current;
+      if (!scene || !files || !files.length) return;
+      const created: Item[] = [];
+      let firstError: string | null = null;
+      for (const file of Array.from(files)) {
+        const res = await importFile(file);
+        if (res.error) {
+          firstError = res.error;
+          continue;
+        }
+        if (res.code !== undefined) {
+          setScript(res.code);
+          setScriptOpen(true);
+          setCodeOpen(false);
+          continue;
+        }
+        for (const obj of res.objects) {
+          const kind = kindOf(obj);
+          obj.userData["kind"] = kind;
+          obj.userData["deformed"] = true;
+          if (obj.userData["solid"] === undefined) obj.userData["solid"] = true;
+          const id = nextId();
+          objectsRef.current.set(id, obj);
+          scene.add(obj);
+          created.push({ id, name: obj.name || file.name, kind });
+        }
+      }
+      setImportError(firstError);
+      if (created.length) {
+        setItems((prev) => [...prev, ...created]);
+        setSelected(created[0]!.id);
+      }
+      tick();
+    },
+    [tick],
+  );
+
   /* ---------------- code -> model ---------------- */
   const runScript = useCallback(() => {
     const scene = sceneRef.current;
