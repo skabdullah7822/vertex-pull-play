@@ -1665,7 +1665,11 @@ export default function ModelEditor() {
     const list = items
       .map((i) => ({ ...i, object: objectsRef.current.get(i.id)! }))
       .filter((i) => i.object);
-    return generateThreeCode(list, BG);
+    try {
+      return generateThreeCode(list, BG);
+    } catch (e) {
+      return `// Could not generate code: ${e instanceof Error ? e.message : String(e)}`;
+    }
   }, [items, codeOpen, selected, forceTick]);
 
   const download = () => {
