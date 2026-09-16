@@ -187,6 +187,8 @@ export default function ModelEditor() {
   const [scriptOpen, setScriptOpen] = useState(false);
   const [script, setScript] = useState(SAMPLE_CODE);
   const [scriptError, setScriptError] = useState<string | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
   const [scriptLog, setScriptLog] = useState<string[]>([]);
   const walkRef = useRef<WalkController | null>(null);
   const walkModeRef = useRef(false);
