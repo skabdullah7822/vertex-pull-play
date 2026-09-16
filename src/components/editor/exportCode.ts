@@ -146,10 +146,10 @@ export function generateThreeCode(items: ExportItem[], bg: string): string {
       // Material definition
       lines.push(`const ${varName}_mat = new THREE.MeshStandardMaterial({`);
       lines.push(`  color: '${colorHex}',`);
-      lines.push(`  metalness: ${mat.metalness.toFixed(2)},`);
-      lines.push(`  roughness: ${mat.roughness.toFixed(2)},`);
-      lines.push(`  wireframe: ${mat.wireframe},`);
-      lines.push(`  flatShading: ${mat.flatShading},`);
+      lines.push(`  metalness: ${(mat?.metalness ?? 0.05).toFixed(2)},`);
+      lines.push(`  roughness: ${(mat?.roughness ?? 0.6).toFixed(2)},`);
+      lines.push(`  wireframe: ${mat?.wireframe ?? false},`);
+      lines.push(`  flatShading: ${mat?.flatShading ?? false},`);
       lines.push(`  side: THREE.DoubleSide`);
       lines.push(`});`);
 
