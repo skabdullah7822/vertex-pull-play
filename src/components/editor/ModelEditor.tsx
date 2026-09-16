@@ -53,6 +53,7 @@ import {
   Footprints,
   Play,
   Terminal,
+  Upload,
 } from "lucide-react";
 import {
   GEOMETRY_SPECS,
