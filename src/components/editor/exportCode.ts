@@ -45,9 +45,11 @@ export function generateThreeCode(items: ExportItem[], bg: string): string {
     const varName = `${item.name.replace(/[^a-zA-Z0-9_]/g, "_")}_${index}`;
     lines.push(`// [${item.kind}] ${item.name}`);
 
-    if (isLight(item.kind)) {
+    const anyObj = item.object as unknown as { isLight?: boolean; isMesh?: boolean };
+
+    if (isLight(item.kind) && anyObj.isLight) {
       const light = item.object as THREE.Light;
-      const colorHex = `#${light.color.getHexString()}`;
+      const colorHex = `#${light.color?.getHexString?.() ?? "ffffff"}`;
       const intensity = light.intensity;
 
       if (item.kind === "ambientLight") {
