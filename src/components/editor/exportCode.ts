@@ -69,9 +69,23 @@ export function generateThreeCode(items: ExportItem[], bg: string): string {
       }
       lines.push(`scene.add(${varName});\n`);
     } else {
-      const mesh = item.object as THREE.Mesh;
-      const mat = mesh.material as THREE.MeshStandardMaterial;
-      const colorHex = `#${mat.color.getHexString()}`;
+      let mesh = item.object as THREE.Mesh;
+      if (!(mesh as unknown as { isMesh?: boolean }).isMesh) {
+        let found: THREE.Mesh | null = null;
+        item.object.traverse((c) => {
+          if (!found && (c as THREE.Mesh).isMesh) found = c as THREE.Mesh;
+        });
+        if (!found) {
+          lines.push(`// (skipped: "${item.name}" has no exportable mesh)\n`);
+          return;
+        }
+        mesh = found;
+      }
+      const rawMat = mesh.material as THREE.Material | THREE.Material[] | undefined;
+      const mat = (Array.isArray(rawMat) ? rawMat[0] : rawMat) as
+        | THREE.MeshStandardMaterial
+        | undefined;
+      const colorHex = `#${mat?.color?.getHexString?.() ?? "cccccc"}`;
 
       // Geometry definition
       if (mesh.userData['deformed'] && mesh.geometry) {
